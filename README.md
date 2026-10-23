@@ -4,6 +4,7 @@ A comprehensive inventory management system designed for small grocery shops in 
 
 ## Features
 
+- **AI Conversational Inventory Agent** — Powered by Google Gemini (`gemini-3.5-flash`) supporting natural English, Tamil script, Tanglish (*"Tomato stock la evlo irukku?"*, *"Bro, thakkali stock kammiya irukku pola"*, *"Innaiku sales evlo?"*), multi-turn corrections (*"Illa, 5 illa 3 packet"*), cancellations (*"Cancel pannidu"*), and two-phase safety confirmation before any stock modification.
 - **Product Management** — Full CRUD with SKU uniqueness, unit validation, category & supplier associations
 - **Batch Inventory Tracking** — FEFO-based stock consumption with full audit ledger (`stock_movements`)
 - **POS Counter Sales** — Real-time billing with automated FEFO batch deductions and reversal capability
@@ -13,6 +14,7 @@ A comprehensive inventory management system designed for small grocery shops in 
 - **AI Demand Forecasting** — Multi-model selection (Moving Average + Holt-Winters) with backtest validation
 - **Smart Reorder Engine** — Calculates safety stock, lead time demand, and urgency priority levels
 - **Budget Optimizer** — Greedy priority-based purchase optimizer respecting working capital limits
+- **Voice & Spoken Audio** — Full Web Speech API integration with speech synthesis (English & Tamil pronunciation)
 - **Reports** — Sales history, stock levels, and purchase history reporting
 
 ---
@@ -61,6 +63,10 @@ DATABASE_URL_SYNC=postgresql+psycopg://postgres:0000@localhost:1234/stocksense_a
 CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000
 DEFAULT_SAFETY_STOCK_DAYS=7
 DEFAULT_LEAD_TIME_DAYS=3
+
+# Gemini AI Conversational Assistant
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-3.5-flash
 ```
 
 ### 2. Backend Installation & Migrations

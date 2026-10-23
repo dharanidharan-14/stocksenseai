@@ -41,22 +41,23 @@ export const VoiceAssistantPage: React.FC<VoiceAssistantPageProps> = ({
   onNavigateTab,
   onDataChanged,
 }) => {
+  const [sessionId] = useState(() => 'stocksense_session_' + Math.random().toString(36).substring(2, 10));
   const [messages, setMessages] = useState<AssistantChatMessage[]>(() => {
     return [
       {
         id: 'welcome-1',
         sender: 'assistant',
-        text: 'Hello! I am your StockSense Voice Assistant. Ask me about your stock, expiring batches, sales performance, or tell me to record sales and stock receipts.',
+        text: 'வணக்கம்! நான் உங்கள் StockSense AI Inventory Assistant. Ask me in English, தமிழ், or Tanglish about your stock, expiring batches, sales performance, or tell me to record sales and stock receipts.',
         speechText:
-          'Hello! I am your StockSense Voice Assistant. How can I help with your inventory today?',
+          'Hello! I am your StockSense AI Assistant. How can I help with your inventory today? Neengal Tamil alladhu Englishil kekkalaam.',
         timestamp: new Date(),
         suggestions: [
+          'Tomato stock la evlo irukku?',
           'How much rice stock is left?',
+          'Innaiku sales evlo?',
           'Which products expire tomorrow?',
-          'Which batch of milk expires first?',
           'Record a sale of 2 milk packets',
-          'What should I reorder today?',
-          'What should I purchase with a budget of 2,000 rupees?',
+          '2000 rooba budget la enna vaanganum?',
         ],
       },
     ];
@@ -158,7 +159,12 @@ export const VoiceAssistantPage: React.FC<VoiceAssistantPageProps> = ({
     setMicError(null);
 
     try {
-      const response: AssistantResponse = await api.sendAssistantCommand(trimmed, false);
+      const response: AssistantResponse = await api.sendAssistantCommand(
+        trimmed,
+        false,
+        undefined,
+        sessionId
+      );
 
       const assistantMsgId = 'asst-' + Date.now();
       const assistantMsg: AssistantChatMessage = {
@@ -177,13 +183,20 @@ export const VoiceAssistantPage: React.FC<VoiceAssistantPageProps> = ({
 
       setMessages((prev) => [...prev, assistantMsg]);
 
-      // If requires confirmation, trigger confirmation prompt
-      if (response.requires_confirmation && response.action_payload) {
+      // If response is a cancellation, clear any active confirmation card
+      if (response.intent === 'CANCELLATION') {
+        setPendingConfirmation(null);
+      } else if (response.requires_confirmation && response.action_payload) {
+        // If requires confirmation or was updated via correction
         setPendingConfirmation({
           messageId: assistantMsgId,
           payload: response.action_payload,
           prompt: response.speech_text,
         });
+      } else if (response.intent === 'RECORD_SALE' || response.intent === 'RECEIVE_STOCK') {
+        // Was confirmed via spoken turn ("Aama, confirm pannu")
+        setPendingConfirmation(null);
+        onDataChanged();
       }
 
       // Read aloud if enabled
@@ -210,8 +223,13 @@ export const VoiceAssistantPage: React.FC<VoiceAssistantPageProps> = ({
     if (!pendingConfirmation) return;
 
     if (!confirmed) {
-      // User cancelled
+      // User cancelled via UI button
       setPendingConfirmation(null);
+      try {
+        await api.sendAssistantCommand('cancel', false, undefined, sessionId);
+      } catch (e) {
+        // ignore
+      }
       const cancelMsg: AssistantChatMessage = {
         id: 'cancel-' + Date.now(),
         sender: 'assistant',
@@ -231,7 +249,8 @@ export const VoiceAssistantPage: React.FC<VoiceAssistantPageProps> = ({
       const response = await api.sendAssistantCommand(
         'confirm',
         true,
-        pendingConfirmation.payload
+        pendingConfirmation.payload,
+        sessionId
       );
 
       const confirmedMsg: AssistantChatMessage = {

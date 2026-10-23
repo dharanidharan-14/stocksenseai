@@ -1145,13 +1145,15 @@ export const api = {
   async sendAssistantCommand(
     text: string,
     confirmed: boolean = false,
-    action_payload?: any
+    action_payload?: any,
+    session_id?: string
   ): Promise<AssistantResponse> {
     try {
       const resp = await apiClient.post('/assistant/command', {
         text,
         confirmed,
         action_payload,
+        session_id,
       });
       return resp.data;
     } catch (err: any) {

@@ -4,13 +4,20 @@ StockSense AI - Core Configuration
 Loads environment variables and provides application-wide settings.
 """
 
-from pydantic_settings import BaseSettings
-from typing import List
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import List, Optional
 import os
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=True,
+        extra="ignore",
+    )
 
     # Application
     APP_NAME: str = "StockSense AI"
@@ -32,14 +39,13 @@ class Settings(BaseSettings):
     # Timezone
     SHOP_TIMEZONE: str = "Asia/Kolkata"
 
+    # Gemini AI
+    GEMINI_API_KEY: Optional[str] = None
+    GEMINI_MODEL: str = "gemini-3.5-flash"
+
     @property
     def cors_origins_list(self) -> List[str]:
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",")]
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = True
 
 
 settings = Settings()

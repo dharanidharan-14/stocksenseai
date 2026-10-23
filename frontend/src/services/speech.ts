@@ -168,21 +168,27 @@ class SpeechService {
     if (!cleanSpeech) return;
 
     try {
+      const isTamil = /[\u0B80-\u0BFF]/.test(cleanSpeech);
       const utterance = new SpeechSynthesisUtterance(cleanSpeech);
-      utterance.lang = 'en-IN';
+      utterance.lang = isTamil ? 'ta-IN' : 'en-IN';
       utterance.rate = 1.0;
       utterance.pitch = 1.0;
 
-      // Select an Indian or clear English voice if available
+      // Select an Indian, Tamil, or clear English voice if available
       const voices = window.speechSynthesis.getVoices();
-      const inVoice = voices.find(
-        (v) => v.lang.includes('en-IN') || v.name.includes('India')
-      );
-      const enVoice = voices.find((v) => v.lang.startsWith('en'));
-      if (inVoice) {
-        utterance.voice = inVoice;
-      } else if (enVoice) {
-        utterance.voice = enVoice;
+      if (isTamil) {
+        const taVoice = voices.find((v) => v.lang.includes('ta') || v.name.toLowerCase().includes('tamil'));
+        if (taVoice) utterance.voice = taVoice;
+      } else {
+        const inVoice = voices.find(
+          (v) => v.lang.includes('en-IN') || v.name.includes('India')
+        );
+        const enVoice = voices.find((v) => v.lang.startsWith('en'));
+        if (inVoice) {
+          utterance.voice = inVoice;
+        } else if (enVoice) {
+          utterance.voice = enVoice;
+        }
       }
 
       utterance.onstart = () => onStart?.();
