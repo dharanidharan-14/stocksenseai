@@ -73,6 +73,19 @@ REGIONAL_ALIASES: Dict[str, str] = {
     "masala": "masala",
 }
 
+# Stop words to exclude from product search candidate tokenization
+STOP_WORDS: set[str] = {
+    "the", "a", "an", "on", "in", "at", "to", "for", "of", "with", "is", "are",
+    "this", "that", "these", "those", "product", "item", "items", "stock",
+    "remove", "add", "delete", "offer", "discount", "percent", "percentage",
+    "how", "much", "many", "what", "which", "show", "check", "tell", "evlo",
+    "irukku", "enna", "la", "ku", "oru", "mattum", "bro", "bhai", "please",
+    "packet", "packets", "kg", "kgs", "bag", "bags", "bottle", "bottles",
+    "box", "boxes", "piece", "pieces", "gram", "grams", "g", "litre", "litres", "l",
+    "can", "you", "me", "i", "we", "he", "she", "it", "they", "my", "our", "your",
+    "here", "there", "give", "take", "bring", "send", "got", "get", "need", "want"
+}
+
 
 def parse_number_from_text(text: str) -> Optional[Decimal]:
     """Helper to extract quantity numbers from text."""
@@ -97,22 +110,23 @@ class AssistantService:
     ) -> List[Product]:
         """
         Fuzzy matches products against actual database records using normalized terms,
-        raw terms, and regional aliases.
+        raw terms, and regional aliases, strictly filtering out common stop words.
         """
         result = await db.execute(select(Product).where(Product.is_active == True))
         all_products = result.scalars().all()
 
-        # Build candidate keyword tokens
         tokens = set()
         for term in search_terms:
             if not term:
                 continue
             t_clean = term.lower().strip()
-            # Check regional alias table
+            # Direct alias match
             if t_clean in REGIONAL_ALIASES:
                 tokens.add(REGIONAL_ALIASES[t_clean])
             for word in re.findall(r"\b[a-zA-Z0-9]+\b", t_clean):
-                if len(word) >= 2:
+                if word in STOP_WORDS:
+                    continue
+                if len(word) >= 3 or word in REGIONAL_ALIASES:
                     tokens.add(word)
                     if word in REGIONAL_ALIASES:
                         tokens.add(REGIONAL_ALIASES[word])
@@ -126,10 +140,13 @@ class AssistantService:
             p_sku_lower = p.sku.lower()
             score = 0
             for token in tokens:
-                if token in p_name_lower:
-                    score += 3 if len(token) > 3 else 1
+                # Exact whole word match gets highest score
+                if re.search(r"\b" + re.escape(token) + r"\b", p_name_lower):
+                    score += 10
+                elif len(token) >= 4 and token in p_name_lower:
+                    score += 3
                 if token in p_sku_lower:
-                    score += 2
+                    score += 5
             if score > 0:
                 scored_matches.append((p, score))
 
@@ -248,10 +265,25 @@ class AssistantService:
                 SessionStore.append_turn(session_id, "assistant", resp.speech_text)
                 return resp
 
-        # ─── 6. ROUTE BASED ON GEMINI PARSED INTENT ───
+        # ─── 6. ROUTE BASED ON CAPABILITY BOUNDARIES & INTENT ───
         intent = parsed.intent
 
-        if intent == "CHECK_STOCK":
+        if intent == "DISCOUNT_OR_OFFER":
+            resp = await cls._handle_discount_or_offer(db, text, parsed)
+        elif intent == "PRICE_MODIFICATION":
+            resp = await cls._handle_price_modification(db, text, parsed)
+        elif intent == "UNSUPPORTED":
+            resp = await cls._handle_unsupported(db, text, parsed)
+        elif intent == "CLARIFICATION":
+            resp = AssistantResponse(
+                intent="CLARIFICATION",
+                confidence_status="NEEDS_CLARIFICATION",
+                speech_text=parsed.clarification_question or parsed.spoken_reply_english or "Could you please clarify that command?",
+                display_text=parsed.clarification_question or "Please provide additional details to complete this request.",
+                raw_transcript=text,
+                suggestions=["How much rice stock is left?", "Record a sale of 2 milk packets"],
+            )
+        elif intent == "CHECK_STOCK":
             resp = await cls._handle_check_stock(db, text, parsed)
         elif intent == "CHECK_LOW_STOCK":
             resp = await cls._handle_low_stock(db, parsed)
@@ -268,30 +300,133 @@ class AssistantService:
         elif intent == "RECEIVE_STOCK":
             resp = await cls._handle_receive_stock(db, text, parsed, session_id)
         else:
-            # Fallback product match check
-            search_candidates = [parsed.product_normalized, parsed.product_raw, text]
-            matched = await cls.match_products(db, [c for c in search_candidates if c])
-            if matched:
-                resp = await cls._handle_check_stock(db, text, parsed)
-            else:
-                resp = AssistantResponse(
-                    intent="UNKNOWN",
-                    speech_text=parsed.spoken_reply_tamil or parsed.spoken_reply_english or "I did not quite understand that. You can ask about stock, sales, or expiry.",
-                    display_text=(
-                        "I couldn't identify the requested operation. "
-                        "You can speak or type in English, Tamil, or Tanglish. Try one of the suggestions below:"
-                    ),
-                    suggestions=[
-                        "Tomato stock la evlo irukku?",
-                        "Innaiku sales evlo?",
-                        "Naalaiku expire aagura items enna?",
-                        "What should I reorder today?",
-                        "Record a sale of 2 milk packets",
-                    ],
-                )
+            # Explicitly reject unknown commands without falling back to a stock check
+            resp = AssistantResponse(
+                intent="UNKNOWN",
+                confidence_status="UNSUPPORTED",
+                speech_text=parsed.spoken_reply_tamil or parsed.spoken_reply_english or "I did not understand that command. You can ask about stock, sales, or record transactions.",
+                display_text=(
+                    "I couldn't identify a supported grocery inventory command in that request.\n"
+                    "StockSense AI supports stock lookups, sales, receipts, expiry alerts, and purchase recommendations."
+                ),
+                raw_transcript=text,
+                suggestions=[
+                    "Tomato stock la evlo irukku?",
+                    "Innaiku sales evlo?",
+                    "Naalaiku expire aagura items enna?",
+                    "What should I reorder today?",
+                    "Record a sale of 2 milk packets",
+                ],
+            )
 
+        resp.raw_transcript = text
         SessionStore.append_turn(session_id, "assistant", resp.speech_text)
         return resp
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # CAPABILITY BOUNDARY HANDLERS (DISCOUNTS, PRICING, UNSUPPORTED)
+    # ──────────────────────────────────────────────────────────────────────────
+
+    @classmethod
+    async def _handle_discount_or_offer(
+        cls, db: AsyncSession, text: str, parsed: GeminiParsedIntent
+    ) -> AssistantResponse:
+        """
+        Handles requests to add, remove, or modify discounts/offers.
+        Inspects application schema and honestly communicates that discount management
+        is not supported in this application, ensuring zero mutations to stock or pricing.
+        """
+        product_note = ""
+        candidates = [t for t in [parsed.product_normalized, parsed.product_raw] if t]
+        matched = await cls.match_products(db, candidates) if candidates else []
+
+        if "this product" in text.lower():
+            product_note = "\n- **Note:** The product reference ('this product') is ambiguous and was not specified."
+        elif matched:
+            product_note = f"\n- **Referenced Product:** {matched[0].name}"
+
+        discount_str = f" ({int(parsed.discount_percent)}%)" if parsed.discount_percent else ""
+
+        speech = (
+            f"Discount and offer management{discount_str} is not currently supported in StockSense AI. "
+            f"No changes were made to prices or inventory."
+        )
+        display = (
+            f"⚠️ **Unsupported Operation: Discount & Offer Management**\n\n"
+            f"You requested: *\"{text}\"*\n"
+            f"{product_note}\n\n"
+            f"**System Capability Status:**\n"
+            f"- Discount, coupon, and promotional offer management is **not supported** in the current database schema.\n"
+            f"- StockSense AI is strictly configured for batch inventory tracking, FEFO deductions, sales, and demand forecasting.\n\n"
+            f"🛡️ **Integrity Guarantee:** Zero changes have been made to product prices, discounts, or inventory ledgers."
+        )
+
+        return AssistantResponse(
+            intent="DISCOUNT_OR_OFFER",
+            confidence_status="UNSUPPORTED",
+            speech_text=speech,
+            display_text=display,
+            raw_transcript=text,
+            requires_confirmation=False,
+            suggestions=[
+                "How much rice stock is left?",
+                "Innaiku sales evlo?",
+                "What should I reorder today?",
+            ],
+        )
+
+    @classmethod
+    async def _handle_price_modification(
+        cls, db: AsyncSession, text: str, parsed: GeminiParsedIntent
+    ) -> AssistantResponse:
+        """
+        Handles requests to change selling price or purchase cost.
+        Refuses voice-driven price mutation and redirects to product catalog.
+        """
+        speech = "Price modification via voice assistant is not supported. Please edit prices in the product catalog."
+        display = (
+            f"⚠️ **Unsupported Operation: Price Modification**\n\n"
+            f"You requested: *\"{text}\"*\n\n"
+            f"**System Capability Status:**\n"
+            f"- Selling prices and purchase costs cannot be modified via voice assistant.\n"
+            f"- To adjust prices, please use the Product Management screen.\n\n"
+            f"🛡️ **Integrity Guarantee:** No changes were made to product prices or stock."
+        )
+        return AssistantResponse(
+            intent="PRICE_MODIFICATION",
+            confidence_status="UNSUPPORTED",
+            speech_text=speech,
+            display_text=display,
+            raw_transcript=text,
+            requires_confirmation=False,
+            suggestions=["How much rice stock is left?", "Innaiku sales evlo?"],
+        )
+
+    @classmethod
+    async def _handle_unsupported(
+        cls, db: AsyncSession, text: str, parsed: GeminiParsedIntent
+    ) -> AssistantResponse:
+        """
+        Handles any other operation outside the supported Kirana inventory features.
+        """
+        reason = parsed.unsupported_reason or "This operation is not supported by the StockSense AI inventory system."
+        speech = f"{reason} No changes were made."
+        display = (
+            f"⚠️ **Unsupported Capability**\n\n"
+            f"You requested: *\"{text}\"*\n\n"
+            f"{reason}\n\n"
+            f"Supported features: stock availability, low stock alerts, expiring batches, sales summary, "
+            f"reorder recommendations, recording sales, and stock receipts."
+        )
+        return AssistantResponse(
+            intent="UNSUPPORTED",
+            confidence_status="UNSUPPORTED",
+            speech_text=speech,
+            display_text=display,
+            raw_transcript=text,
+            requires_confirmation=False,
+            suggestions=["How much rice stock is left?", "Innaiku sales evlo?", "What should I reorder today?"],
+        )
 
     # ──────────────────────────────────────────────────────────────────────────
     # A. READ-ONLY INVENTORY QUERIES
@@ -301,36 +436,38 @@ class AssistantService:
     async def _handle_check_stock(
         cls, db: AsyncSession, text: str, parsed: GeminiParsedIntent
     ) -> AssistantResponse:
-        search_terms = [parsed.product_normalized, parsed.product_raw, text]
-        matched = await cls.match_products(db, [t for t in search_terms if t])
+        search_candidates = [t for t in [parsed.product_normalized, parsed.product_raw] if t]
+        matched = await cls.match_products(db, search_candidates if search_candidates else [text])
 
         if not matched:
             spoken = parsed.spoken_reply_tamil or parsed.spoken_reply_english or "No matching product found in inventory."
             return AssistantResponse(
                 intent="CHECK_STOCK",
+                confidence_status="NEEDS_CLARIFICATION",
                 speech_text=spoken,
-                display_text=f"No product found matching '{parsed.product_raw or parsed.product_normalized or text}' in database. Please check the spelling or catalog.",
+                display_text=f"No active product in your catalog matches '{parsed.product_raw or parsed.product_normalized or text}'. Please check spelling or product name.",
+                raw_transcript=text,
                 suggestions=["Show all products currently out of stock", "Which products are running low?"]
             )
 
-        # Ambiguity check: If user asks generically and multiple distinct top brands match
-        if len(matched) > 1 and not (parsed.product_raw and parsed.product_raw.lower() in matched[0].name.lower()):
-            first_two = matched[:2]
-            p1_name = first_two[0].name
-            p2_name = first_two[1].name
-            if parsed.product_normalized and parsed.product_normalized.lower() not in p1_name.lower():
-                speech = f"Did you mean {p1_name} or {p2_name}?"
+        # Ambiguity guard: If multiple distinct products match and user query was generic (e.g. "milk")
+        if len(matched) > 1:
+            user_kw = (parsed.product_raw or parsed.product_normalized or "").lower().strip()
+            if not any(user_kw == p.name.lower() or user_kw == p.sku.lower() for p in matched[:3]):
+                top_items = matched[:3]
+                speech = f"Multiple products match '{user_kw or 'your request'}': {top_items[0].name} or {top_items[1].name}. Which one would you like to check?"
                 display = (
                     f"**Multiple Products Matched:**\n"
-                    f"- 1. {p1_name}\n"
-                    f"- 2. {p2_name}\n\n"
-                    f"Please specify which brand you would like to inspect."
+                    + "\n".join([f"- **{p.name}** (SKU: `{p.sku}`)" for p in top_items])
+                    + "\n\nPlease specify which brand or variant you would like to inspect."
                 )
                 return AssistantResponse(
                     intent="CLARIFICATION",
+                    confidence_status="AMBIGUOUS",
                     speech_text=speech,
                     display_text=display,
-                    suggestions=[f"Check stock for {p1_name}", f"Check stock for {p2_name}"]
+                    raw_transcript=text,
+                    suggestions=[f"Check stock for {p.name}" for p in top_items],
                 )
 
         product = matched[0]
@@ -767,20 +904,69 @@ class AssistantService:
     async def _handle_record_sale(
         cls, db: AsyncSession, text: str, parsed: GeminiParsedIntent, session_id: str
     ) -> AssistantResponse:
-        search_terms = [parsed.product_normalized, parsed.product_raw, text]
-        matched = await cls.match_products(db, [t for t in search_terms if t])
+        # Resolve product from extracted candidates first
+        candidates = [t for t in [parsed.product_normalized, parsed.product_raw] if t]
+        matched = await cls.match_products(db, candidates if candidates else [text])
 
         if not matched:
             return AssistantResponse(
-                intent="RECORD_SALE",
+                intent="CLARIFICATION",
+                confidence_status="NEEDS_CLARIFICATION",
                 speech_text="I couldn't identify which product you want to sell. Please specify the product name.",
-                display_text="Product not recognized in catalog. Example: 'Record a sale of 2 milk packets'",
+                display_text="Product not recognized in your catalog. Please state the product name (e.g. 'Record a sale of 2 milk packets').",
+                raw_transcript=text,
                 suggestions=["Record a sale of 2 milk packets", "5 packet biscuit sale panniten"],
             )
 
+        # Ambiguity guard: check if generic term matched multiple products
+        if len(matched) > 1:
+            user_kw = (parsed.product_raw or parsed.product_normalized or "").lower().strip()
+            # If user did not provide an exact name match
+            if not any(user_kw == p.name.lower() or user_kw == p.sku.lower() for p in matched[:3]):
+                top_items = matched[:3]
+                speech = f"Multiple products match '{user_kw or 'your request'}': {top_items[0].name} or {top_items[1].name}. Which one would you like to sell?"
+                display = (
+                    f"**Multiple Product Candidates Found:**\n"
+                    + "\n".join([f"- **{p.name}** (SKU: `{p.sku}`, Price: ₹{p.selling_price})" for p in top_items])
+                    + "\n\nPlease clarify which exact product you would like to sell."
+                )
+                return AssistantResponse(
+                    intent="CLARIFICATION",
+                    confidence_status="AMBIGUOUS",
+                    speech_text=speech,
+                    display_text=display,
+                    raw_transcript=text,
+                    suggestions=[f"Record a sale of {p.name.split()[0]}" for p in top_items],
+                )
+
         product = matched[0]
+
+        # Parameter validation: DO NOT GUESS MISSING QUANTITIES
         qty_num = parsed.quantity if parsed.quantity is not None else parse_number_from_text(text)
-        qty = Decimal(str(qty_num)) if qty_num else Decimal("1")
+        if qty_num is None:
+            speech = f"How many {product.unit}s of {product.name} would you like to sell?"
+            display = f"Please specify the quantity to sell for **{product.name}**."
+            return AssistantResponse(
+                intent="CLARIFICATION",
+                confidence_status="NEEDS_CLARIFICATION",
+                speech_text=speech,
+                display_text=display,
+                raw_transcript=text,
+                suggestions=[
+                    f"Record a sale of 1 {product.unit} of {product.name.split()[0]}",
+                    f"Record a sale of 2 {product.unit}s of {product.name.split()[0]}",
+                ],
+            )
+
+        qty = Decimal(str(qty_num))
+        if qty <= 0:
+            return AssistantResponse(
+                intent="RECORD_SALE",
+                confidence_status="NEEDS_CLARIFICATION",
+                speech_text="Quantity must be greater than zero.",
+                display_text="Sale quantity must be a positive number.",
+                raw_transcript=text,
+            )
 
         # Validate stock availability
         today = date.today()
@@ -795,9 +981,11 @@ class AssistantService:
             )
             return AssistantResponse(
                 intent="RECORD_SALE",
+                confidence_status="CONFIRMED",
                 speech_text=speech,
                 display_text=display,
                 error="INSUFFICIENT_STOCK",
+                raw_transcript=text,
             )
 
         line_total = qty * product.selling_price
@@ -829,11 +1017,13 @@ class AssistantService:
 
         return AssistantResponse(
             intent="RECORD_SALE",
+            confidence_status="CONFIRMED",
             speech_text=speech_prompt,
             display_text=display_prompt,
             requires_confirmation=True,
             action_payload=action_payload,
             data=action_payload,
+            raw_transcript=text,
             suggestions=["Aama, confirm pannu", "Illa, 3 packet mattum", "Cancel pannidu"],
         )
 
@@ -845,20 +1035,68 @@ class AssistantService:
     async def _handle_receive_stock(
         cls, db: AsyncSession, text: str, parsed: GeminiParsedIntent, session_id: str
     ) -> AssistantResponse:
-        search_terms = [parsed.product_normalized, parsed.product_raw, text]
-        matched = await cls.match_products(db, [t for t in search_terms if t])
+        # Resolve product from candidates first
+        candidates = [t for t in [parsed.product_normalized, parsed.product_raw] if t]
+        matched = await cls.match_products(db, candidates if candidates else [text])
 
         if not matched:
             return AssistantResponse(
-                intent="RECEIVE_STOCK",
+                intent="CLARIFICATION",
+                confidence_status="NEEDS_CLARIFICATION",
                 speech_text="I couldn't identify which product to receive stock for. Please specify the product name.",
                 display_text="Product not found in catalog. Example: '10 kilo tomato vandhiruchu, stock update pannu'",
+                raw_transcript=text,
                 suggestions=["We received 20 biscuit packets", "10 kilo tomato vandhiruchu, stock update pannu"],
             )
 
+        # Ambiguity guard
+        if len(matched) > 1:
+            user_kw = (parsed.product_raw or parsed.product_normalized or "").lower().strip()
+            if not any(user_kw == p.name.lower() or user_kw == p.sku.lower() for p in matched[:3]):
+                top_items = matched[:3]
+                speech = f"Multiple products match '{user_kw or 'your request'}': {top_items[0].name} or {top_items[1].name}. Which one did you receive?"
+                display = (
+                    f"**Multiple Product Candidates Found:**\n"
+                    + "\n".join([f"- **{p.name}** (SKU: `{p.sku}`)" for p in top_items])
+                    + "\n\nPlease clarify which exact product was received."
+                )
+                return AssistantResponse(
+                    intent="CLARIFICATION",
+                    confidence_status="AMBIGUOUS",
+                    speech_text=speech,
+                    display_text=display,
+                    raw_transcript=text,
+                    suggestions=[f"Received 10 {p.unit}s of {p.name.split()[0]}" for p in top_items],
+                )
+
         product = matched[0]
+
+        # Parameter validation: DO NOT GUESS MISSING QUANTITIES
         qty_num = parsed.quantity if parsed.quantity is not None else parse_number_from_text(text)
-        qty = Decimal(str(qty_num)) if qty_num else Decimal("10")
+        if qty_num is None:
+            speech = f"How many {product.unit}s of {product.name} did you receive?"
+            display = f"Please specify the quantity received for **{product.name}**."
+            return AssistantResponse(
+                intent="CLARIFICATION",
+                confidence_status="NEEDS_CLARIFICATION",
+                speech_text=speech,
+                display_text=display,
+                raw_transcript=text,
+                suggestions=[
+                    f"Received 10 {product.unit}s of {product.name.split()[0]}",
+                    f"Received 20 {product.unit}s of {product.name.split()[0]}",
+                ],
+            )
+
+        qty = Decimal(str(qty_num))
+        if qty <= 0:
+            return AssistantResponse(
+                intent="RECEIVE_STOCK",
+                confidence_status="NEEDS_CLARIFICATION",
+                speech_text="Received quantity must be greater than zero.",
+                display_text="Received quantity must be a positive number.",
+                raw_transcript=text,
+            )
 
         # Expiry date handling
         expiry = None
@@ -895,11 +1133,13 @@ class AssistantService:
 
         return AssistantResponse(
             intent="RECEIVE_STOCK",
+            confidence_status="CONFIRMED",
             speech_text=speech_prompt,
             display_text=display_prompt,
             requires_confirmation=True,
             action_payload=action_payload,
             data=action_payload,
+            raw_transcript=text,
             suggestions=["Aama, confirm pannu", "Illa, 5 kg mattum", "Cancel pannidu"],
         )
 

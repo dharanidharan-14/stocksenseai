@@ -71,6 +71,8 @@ class AssistantResponse(BaseModel):
     action_payload: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
     suggestions: List[str] = []
+    raw_transcript: Optional[str] = None
+    confidence_status: str = "CONFIRMED"  # CONFIRMED, AMBIGUOUS, UNSUPPORTED, NEEDS_CLARIFICATION
 
 
 class GeminiParsedIntent(BaseModel):
@@ -81,14 +83,15 @@ class GeminiParsedIntent(BaseModel):
             "Primary intent category. MUST be one of: "
             "CHECK_STOCK, CHECK_LOW_STOCK, CHECK_OUT_OF_STOCK, CHECK_EXPIRY, "
             "SALES_INFO, AI_RECOMMENDATION, RECEIVE_STOCK, RECORD_SALE, "
-            "RECORD_DAMAGE, INVENTORY_CORRECTION, CONFIRMATION, CANCELLATION, "
-            "CORRECTION, CLARIFICATION, UNKNOWN"
+            "CONFIRMATION, CANCELLATION, CORRECTION, CLARIFICATION, "
+            "DISCOUNT_OR_OFFER, PRICE_MODIFICATION, UNSUPPORTED, UNKNOWN"
         )
     )
     product_raw: Optional[str] = Field(None, description="Raw product name or colloquial mention in speech, e.g. 'thakkali', 'tomato', 'aata', 'milk'")
     product_normalized: Optional[str] = Field(None, description="Canonical normalized English name, e.g. 'Tomato', 'Milk', 'Wheat Flour', 'Basmati Rice'")
-    quantity: Optional[float] = Field(None, description="Explicit quantity mentioned e.g. 2, 5, 10.5")
+    quantity: Optional[float] = Field(None, description="Explicit quantity mentioned e.g. 2, 5, 10.5. MUST BE NULL if not explicitly stated by user.")
     unit: Optional[str] = Field(None, description="Unit mentioned: packet, kg, piece, litre, bottle, box, etc.")
+    discount_percent: Optional[float] = Field(None, description="Discount or offer percentage mentioned e.g. 20 for 20%")
     time_frame: Optional[str] = Field(None, description="Time reference: 'today', 'tomorrow', 'this_week', '7_days', 'expired', or specific date")
     budget: Optional[float] = Field(None, description="Rupee purchase budget if mentioned e.g. 2000")
     cost_per_unit: Optional[float] = Field(None, description="Unit wholesale cost or selling price if specified")
@@ -100,4 +103,7 @@ class GeminiParsedIntent(BaseModel):
     is_cancellation: bool = Field(False, description="True if user is cancelling e.g. 'cancel', 'vendaam', 'stop', 'cancel pannidu'")
     is_correction: bool = Field(False, description="True if user is correcting previous proposal e.g. 'illa, 5 illa 3 packet'")
     clarification_question: Optional[str] = Field(None, description="Clarifying question if critical info is missing")
+    is_supported: bool = Field(True, description="False if user requested unsupported action like discount/offer or price modification")
+    missing_parameters: List[str] = Field(default_factory=list, description="List of required parameters that were omitted, e.g. ['quantity']")
+    unsupported_reason: Optional[str] = Field(None, description="Explicit explanation if requested action is not supported")
 

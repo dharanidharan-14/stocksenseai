@@ -20,40 +20,39 @@ from app.schemas.assistant import GeminiParsedIntent
 logger = logging.getLogger("stocksense.assistant.gemini")
 
 SYSTEM_INSTRUCTION = """You are the AI Inventory Engine for StockSense AI, a smart Kirana (grocery store) operating in Tamil Nadu, India.
-Your job is to understand shopkeeper speech and text, which is frequently spoken in:
-- Standard English
-- Pure Tamil script (e.g., 'அரிசி இருப்பு எவ்வளவு உள்ளது?')
-- Tanglish (Tamil spoken in English letters, e.g., 'Tomato stock la evlo irukku?', 'Bro, tomato stock kammiya irukku pola', 'Innaiku sales evlo?', 'Naalaiku expire aagura items enna?')
-- Local Kirana & Bazaar slang with Hindi/Tamil blends (e.g., 'Bhai, 5 packet aata customer ku kudu, bill podu', 'Pathu kilo thakkali vandhuruchu')
+Your job is to understand shopkeeper speech and text in English, Tamil script, Tanglish, and local Bazaar slang.
 
-Rules for intent parsing:
-1. Intent Classification:
-   - CHECK_STOCK: Checking quantity or availability of a specific product (e.g., 'Tomato stock la evlo irukku?', 'Do we have sugar?').
-   - CHECK_LOW_STOCK: Checking which items are running low or need reordering (e.g., 'Enna items kammiya irukku?', 'Low stock items list pannu').
-   - CHECK_OUT_OF_STOCK: Checking zero-stock items (e.g., 'Theendhu pona items enna?').
-   - CHECK_EXPIRY: Asking about expiring batches or expired food (e.g., 'Naalaiku expire aagura items enna?', 'Which milk batch expires first?').
-   - SALES_INFO: Inquiries about turnover, revenue, or items sold (e.g., 'Innaiku sales evlo?', 'How much did I sell today?', 'Top selling item enna?').
-   - AI_RECOMMENDATION: Asking what to purchase or asking for budget purchasing advice (e.g., 'What should I reorder today?', '2000 rooba budget la enna vaanganum?').
-   - RECEIVE_STOCK: Receiving new inventory, inbound shipments, or adding batches (e.g., '10 kilo tomato vandhiruchu, stock update pannu', 'Tomato-ku innum pathu kilo serthu vidu', 'We received 20 packets of milk').
-   - RECORD_SALE: Cashier recording customer purchases/sales (e.g., '5 packet biscuit sale panniten', 'Sold 2 packets milk').
-   - RECORD_DAMAGE: Reporting spoiled, rotten, or damaged stock (e.g., '2 packet milk spoil aayiduchu', 'Damage entry podu').
-   - INVENTORY_CORRECTION: Correcting stock discrepancies (e.g., 'Stock count thappa irukku, 15 kg maathividu').
-   - CONFIRMATION: Answering yes to a pending proposal (e.g., 'Aama', 'Yes', 'Confirm pannu', 'Sari', 'Proceed').
-   - CANCELLATION: Answering no or aborting (e.g., 'Cancel pannidu', 'Vendaam', 'Stop', 'No').
-   - CORRECTION: Modifying a previous request (e.g., 'Illa, 5 illa 3 packet', 'Actually 10 kg mattum').
-   - UNKNOWN: Irrelevant or completely unintelligible input.
+CRITICAL INVENTORY CAPABILITY BOUNDARIES:
+The StockSense AI application ONLY supports the following backend operations:
+1. CHECK_STOCK: Checking quantity or availability of a specific product (e.g. 'Tomato stock la evlo irukku?', 'Do we have sugar?').
+2. CHECK_LOW_STOCK: Checking products running low or near reorder thresholds (e.g. 'Enna items kammiya irukku?').
+3. CHECK_OUT_OF_STOCK: Checking zero usable stock items (e.g. 'Theendhu pona items enna?').
+4. CHECK_EXPIRY: Checking batches expiring soon or expired (e.g. 'Naalaiku expire aagura items enna?').
+5. SALES_INFO: Inquiries about turnover, revenue, or items sold today/this week (e.g. 'Innaiku sales evlo?').
+6. AI_RECOMMENDATION: Asking what to purchase or asking for budget purchase advice (e.g. '2000 rooba budget la enna vaanganum?').
+7. RECEIVE_STOCK: Receiving new inventory batches (e.g. '10 kilo tomato vandhuruchu', 'We received 20 packets milk').
+8. RECORD_SALE: Recording customer sales at the counter (e.g. '5 packet biscuit sale panniten', 'Sold 2 packets milk').
+9. CONFIRMATION: Confirming a pending proposal ('Aama', 'Yes', 'Confirm pannu', 'Sari', 'Proceed').
+10. CANCELLATION: Cancelling/aborting a proposal ('Cancel pannidu', 'Vendaam', 'Stop', 'No').
+11. CORRECTION: Modifying quantity/unit of pending proposal ('Illa, 5 illa 3 packet', 'Actually 10 kg mattum').
 
-2. Entity Extraction:
-   - Extract the raw product mentioned in 'product_raw' (e.g. 'thakkali', 'aata', 'paal', 'milk').
-   - Extract normalized English canonical name in 'product_normalized' (e.g. 'Tomato', 'Wheat Flour', 'Milk').
-   - Extract numeric quantity in 'quantity' (e.g. 5, 10, 2.5). Convert spoken words ('pathu' -> 10, 'rendu' -> 2, 'five' -> 5).
-   - Extract unit in 'unit' (packet, kg, gram, litre, ml, piece, box, bottle).
-   - Extract time references in 'time_frame' ('today', 'tomorrow', '7_days', 'expired', or dates).
-   - Extract rupee budget if mentioned in 'budget' (e.g. '2000 rooba' -> 2000.0).
+EXPLICITLY UNSUPPORTED OPERATIONS (MUST BE CLASSIFIED ACCORDINGLY):
+- DISCOUNT_OR_OFFER: Asking to add, remove, calculate, or modify discounts, promotional offers, percentage off, or coupon deals (e.g. 'Remove the 20 percent offer on this product', 'Give 10% discount on dal').
+  -> Set intent="DISCOUNT_OR_OFFER", is_supported=False, discount_percent=<extracted number if present>, unsupported_reason="Discount and promotional offer management is not supported in this application. No changes have been made to prices or inventory."
+- PRICE_MODIFICATION: Changing selling prices or purchase costs (e.g. 'Change price of tomato to 40', 'Vilai maathu').
+  -> Set intent="PRICE_MODIFICATION", is_supported=False, unsupported_reason="Modifying prices via voice is not supported. Please edit prices in the product catalog."
+- UNSUPPORTED: Any other operation outside the supported Kirana inventory features (e.g. customer credit/khata ledger, employee management, store deletion).
+  -> Set intent="UNSUPPORTED", is_supported=False, unsupported_reason="This operation is not supported by the inventory application."
+- UNKNOWN: Irrelevant, ambiguous, or unintelligible input.
+  -> Set intent="UNKNOWN", is_supported=False.
 
-3. Spoken Responses:
-   - Provide a concise spoken response in English ('spoken_reply_english').
-   - Provide an equivalent natural, friendly response in Tanglish ('spoken_reply_tamil') suitable for speech synthesis.
+IMPORTANT ENTITY & PARAMETER RULES:
+- NEVER FABRICATE OR GUESS QUANTITIES:
+  If a user says 'Record a sale of milk' or 'We received tomato' without stating an explicit quantity, set quantity=null and add 'quantity' to missing_parameters.
+- NEVER FABRICATE PRODUCTS:
+  If user says 'Remove the 20 percent offer on this product' or 'Record sale of 2 packets' without stating which product, set product_raw=null and add 'product' to missing_parameters.
+- DO NOT DEFAULT TO CHECK_STOCK:
+  Never classify a discount, offer, price change, or unknown phrase as CHECK_STOCK just because a product name or number is present.
 """
 
 
@@ -157,8 +156,8 @@ class GeminiParserService:
     @classmethod
     def _heuristic_fallback(cls, text: str) -> GeminiParsedIntent:
         """
-        Safe local heuristic fallback when Gemini API is unreachable or unconfigured.
-        Ensures the shopkeeper always receives a helpful response without a 500 error.
+        Safe local heuristic fallback when Gemini API is unreachable, quota-exhausted, or unconfigured.
+        Strictly observes capability boundaries to prevent hallucinating stock actions.
         """
         import re
         from decimal import Decimal
@@ -183,8 +182,41 @@ class GeminiParserService:
                 spoken_reply_tamil="Transaction cancel pannittaen.",
             )
 
-        # 3. Multi-turn Correction check (e.g. "Illa, 5 illa 3 packet", "change to 4")
-        if any(w in text_lower for w in ["illa", "not ", "instead", "change", "maathidu"]) and re.search(r"\b\d+(?:\.\d+)?\b", text_lower):
+        # 3. DISCOUNT OR OFFER (Explicitly Unsupported Boundary)
+        if any(w in text_lower for w in ["offer", "discount", "percent", "percentage", "%", "thallupadi", "coupon"]):
+            pct_m = re.search(r"(\d+(?:\.\d+)?)\s*(?:%|percent|percentage)?", text_lower)
+            pct = float(pct_m.group(1)) if pct_m else None
+            prod = None
+            for candidate in ["milk", "rice", "tomato", "thakkali", "biscuit", "atta", "oil", "dal", "ghee"]:
+                if candidate in text_lower:
+                    prod = candidate
+                    break
+            return GeminiParsedIntent(
+                intent="DISCOUNT_OR_OFFER",
+                is_supported=False,
+                product_raw=prod,
+                discount_percent=pct,
+                unsupported_reason="Discount and promotional offer management is not currently supported in this application. No changes have been made to prices or inventory.",
+                spoken_reply_english="Discount and offer management is not currently supported in this application.",
+                spoken_reply_tamil="Discount alladhu offer management indha app-la ipodhikku illai.",
+            )
+
+        # 4. PRICE MODIFICATION (Explicitly Unsupported Boundary)
+        if any(w in text_lower for w in ["change price", "set price", "update price", "vilai maathu", "price of", "new price", "change the price"]):
+            return GeminiParsedIntent(
+                intent="PRICE_MODIFICATION",
+                is_supported=False,
+                unsupported_reason="Price modification via voice is not supported. Please edit selling prices in the product catalog.",
+                spoken_reply_english="Price modification via voice assistant is not currently supported.",
+                spoken_reply_tamil="Voice assistant vazhiyaaga vilai maatra mudiyaadhu.",
+            )
+
+        # 5. Multi-turn Correction check (e.g. "Illa, 5 illa 3 packet", "change to 4")
+        if (
+            not any(p in text_lower for p in ["price", "vilai", "rate"])
+            and any(w in text_lower for w in ["illa", "not ", "instead", "change to", "maathidu"])
+            and re.search(r"\b\d+(?:\.\d+)?\b", text_lower)
+        ):
             nums = re.findall(r"\b\d+(?:\.\d+)?\b", text_lower)
             qty = Decimal(nums[-1]) if nums else None
             unit_match = re.search(r"\b(packet|packets|kg|kgs|bag|bags|bottle|bottles|tin|tins|piece|pieces|litre|litres)\b", text_lower)
@@ -192,38 +224,52 @@ class GeminiParserService:
             return GeminiParsedIntent(
                 intent="CORRECTION",
                 is_correction=True,
-                quantity=qty,
+                quantity=float(qty) if qty is not None else None,
                 unit=unit_val,
                 spoken_reply_english=f"Quantity updated to {qty} {unit_val or ''}. Confirm when ready.",
                 spoken_reply_tamil=f"Alavu {qty} {unit_val or ''}-a maathittaen. Confirm pannalaamaa?",
             )
 
-        # 4. Record sale (e.g. "record sale", "vithuten", "sale of 2 milk packets")
+        # 6. Record sale
         if any(w in text_lower for w in ["record sale", "vithuten", "sold", "sale pannu", "sale of"]):
             nums = re.findall(r"\b\d+(?:\.\d+)?\b", text_lower)
-            qty = Decimal(nums[0]) if nums else Decimal("1")
+            qty = Decimal(nums[0]) if nums else None
             unit_match = re.search(r"\b(packet|packets|kg|kgs|bag|bags|bottle|bottles|tin|tins|piece|pieces|litre|litres)\b", text_lower)
             unit_val = unit_match.group(1) if unit_match else None
-            # Extract product keyword
             prod = None
             for candidate in ["milk", "rice", "tomato", "thakkali", "biscuit", "atta", "oil", "dal", "sugar", "salt"]:
                 if candidate in text_lower:
                     prod = candidate
                     break
+            missing = []
+            if qty is None:
+                missing.append("quantity")
+            if not prod:
+                missing.append("product")
+
             return GeminiParsedIntent(
                 intent="RECORD_SALE",
-                product_raw=prod or text,
-                product_normalized=prod,
-                quantity=qty,
+                product_raw=prod,
+                product_normalized=prod.capitalize() if prod else None,
+                quantity=float(qty) if qty is not None else None,
                 unit=unit_val,
-                spoken_reply_english=f"Proposing sale of {qty} {prod or 'items'}. Please confirm.",
-                spoken_reply_tamil=f"{qty} {prod or 'items'} sale panna confirm pannunga.",
+                missing_parameters=missing,
+                spoken_reply_english=(
+                    f"Proposing sale of {qty} {unit_val or ''} of {prod}. Please confirm."
+                    if not missing else
+                    f"How many {unit_val or 'units'} of {prod or 'the product'} would you like to record?"
+                ),
+                spoken_reply_tamil=(
+                    f"{qty} {unit_val or ''} {prod} sale panna confirm pannunga."
+                    if not missing else
+                    f"{prod or 'Product'}-oda ethanai alavu sale panna vendum?"
+                ),
             )
 
-        # 5. Receive stock (e.g. "received 10 biscuit", "vandhuruchu", "stock receipt")
+        # 7. Receive stock
         if any(w in text_lower for w in ["receive", "received", "vandhuruchu", "vandhiruchu", "stock receipt"]):
             nums = re.findall(r"\b\d+(?:\.\d+)?\b", text_lower)
-            qty = Decimal(nums[0]) if nums else Decimal("1")
+            qty = Decimal(nums[0]) if nums else None
             unit_match = re.search(r"\b(packet|packets|kg|kgs|bag|bags|bottle|bottles|tin|tins|piece|pieces|litre|litres)\b", text_lower)
             unit_val = unit_match.group(1) if unit_match else None
             prod = None
@@ -231,17 +277,32 @@ class GeminiParserService:
                 if candidate in text_lower:
                     prod = candidate
                     break
+            missing = []
+            if qty is None:
+                missing.append("quantity")
+            if not prod:
+                missing.append("product")
+
             return GeminiParsedIntent(
                 intent="RECEIVE_STOCK",
-                product_raw=prod or text,
-                product_normalized=prod,
-                quantity=qty,
+                product_raw=prod,
+                product_normalized=prod.capitalize() if prod else None,
+                quantity=float(qty) if qty is not None else None,
                 unit=unit_val,
-                spoken_reply_english=f"Proposing stock receipt of {qty} {prod or 'items'}. Please confirm.",
-                spoken_reply_tamil=f"{qty} {prod or 'items'} stock receipt confirm pannunga.",
+                missing_parameters=missing,
+                spoken_reply_english=(
+                    f"Proposing stock receipt of {qty} {unit_val or ''} of {prod}. Please confirm."
+                    if not missing else
+                    f"How many {unit_val or 'units'} of {prod or 'the product'} did you receive?"
+                ),
+                spoken_reply_tamil=(
+                    f"{qty} {unit_val or ''} {prod} stock receipt confirm pannunga."
+                    if not missing else
+                    f"{prod or 'Product'}-la ethanai alavu vandhadhu?"
+                ),
             )
 
-        # 6. Sales info
+        # 8. Sales info
         if any(w in text_lower for w in ["sales", "innaiku sales", "sold today", "revenue", "turnover"]):
             return GeminiParsedIntent(
                 intent="SALES_INFO",
@@ -250,7 +311,7 @@ class GeminiParserService:
                 spoken_reply_tamil="Innaiku sales summary paakkuren.",
             )
 
-        # 7. Expiry
+        # 9. Expiry
         if any(w in text_lower for w in ["expire", "expiry", "expiring", "expired"]):
             time_f = "tomorrow" if "tomorrow" in text_lower or "naalaiku" in text_lower else "7_days"
             return GeminiParsedIntent(
@@ -260,7 +321,7 @@ class GeminiParserService:
                 spoken_reply_tamil=f"Expiring items list check panren.",
             )
 
-        # 8. Low stock / Out of stock
+        # 10. Low stock / Out of stock
         if any(w in text_lower for w in ["out of stock", "theendhu", "theenthurchu"]):
             return GeminiParsedIntent(
                 intent="CHECK_OUT_OF_STOCK",
@@ -274,7 +335,7 @@ class GeminiParserService:
                 spoken_reply_tamil="Kammiya irukkura items check panren.",
             )
 
-        # 9. Reorder / Budget
+        # 11. Reorder / Budget
         if any(w in text_lower for w in ["reorder", "budget", "recommend", "vaanganum"]):
             budget_val = None
             b_match = re.search(r"\b(\d+(?:,\d+)?)\s*(?:rooba|rupee|rs|inr)?\s*budget\b", text_lower)
@@ -290,10 +351,25 @@ class GeminiParserService:
                 spoken_reply_tamil="Reorder panna vendiya items check panren.",
             )
 
-        # 10. Default stock check
+        # 12. Explicit Stock Check Queries
+        if any(w in text_lower for w in ["stock", "available", "left", "irukku", "evlo", "irukka", "how much", "how many", "quantity"]):
+            prod = None
+            for candidate in ["milk", "rice", "tomato", "thakkali", "biscuit", "atta", "oil", "dal", "sugar", "salt", "ghee", "bread"]:
+                if candidate in text_lower:
+                    prod = candidate
+                    break
+            return GeminiParsedIntent(
+                intent="CHECK_STOCK",
+                product_raw=prod or text,
+                product_normalized=prod.capitalize() if prod else None,
+                spoken_reply_english="Checking stock for the requested item.",
+                spoken_reply_tamil="Stock check panren.",
+            )
+
+        # 13. Default Unknown Input (DO NOT default to CHECK_STOCK)
         return GeminiParsedIntent(
-            intent="CHECK_STOCK",
-            product_raw=text,
-            spoken_reply_english="Checking stock for the requested item.",
-            spoken_reply_tamil="Stock check panren.",
+            intent="UNKNOWN",
+            is_supported=False,
+            spoken_reply_english="I couldn't identify that command. You can ask about stock, expiring products, sales, or record transactions.",
+            spoken_reply_tamil="Enakku puriyavillai. Stock, sales, alladhu transactions patri ketkalaam.",
         )

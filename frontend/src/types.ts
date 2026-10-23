@@ -230,6 +230,8 @@ export interface AssistantResponse {
   action_payload?: any;
   error?: string;
   suggestions?: string[];
+  raw_transcript?: string;
+  confidence_status?: 'CONFIRMED' | 'AMBIGUOUS' | 'UNSUPPORTED' | 'NEEDS_CLARIFICATION';
 }
 
 export interface AssistantChatMessage {
@@ -243,6 +245,8 @@ export interface AssistantChatMessage {
   actionPayload?: any;
   error?: string;
   suggestions?: string[];
+  rawTranscript?: string;
+  confidenceStatus?: 'CONFIRMED' | 'AMBIGUOUS' | 'UNSUPPORTED' | 'NEEDS_CLARIFICATION';
   timestamp: Date;
 }
 

@@ -25,6 +25,9 @@ import {
   Loader2,
   Info,
   DollarSign,
+  Edit3,
+  HelpCircle,
+  XCircle,
 } from 'lucide-react';
 import { AssistantChatMessage, AssistantResponse, Product } from '../types';
 import { api } from '../services/api';
@@ -70,6 +73,8 @@ export const VoiceAssistantPage: React.FC<VoiceAssistantPageProps> = ({
   const [liveTranscript, setLiveTranscript] = useState('');
   const [micError, setMicError] = useState<string | null>(null);
   const [autoSpeak, setAutoSpeak] = useState(true);
+  const [reviewBeforeSend, setReviewBeforeSend] = useState(true);
+  const [reviewBanner, setReviewBanner] = useState<string | null>(null);
 
   // Active pending confirmation action
   const [pendingConfirmation, setPendingConfirmation] = useState<{
@@ -98,6 +103,7 @@ export const VoiceAssistantPage: React.FC<VoiceAssistantPageProps> = ({
     } else {
       setMicError(null);
       setLiveTranscript('');
+      setReviewBanner(null);
       speechService.startListening({
         onStart: () => {
           setIsListening(true);
@@ -109,7 +115,12 @@ export const VoiceAssistantPage: React.FC<VoiceAssistantPageProps> = ({
         onResult: (finalText) => {
           setIsListening(false);
           setLiveTranscript('');
-          handleSendCommand(finalText);
+          if (reviewBeforeSend) {
+            setInputText(finalText);
+            setReviewBanner('Spoken command captured. Review or edit below, then click Send.');
+          } else {
+            handleSendCommand(finalText);
+          }
         },
         onError: (err) => {
           setIsListening(false);
@@ -155,6 +166,7 @@ export const VoiceAssistantPage: React.FC<VoiceAssistantPageProps> = ({
 
     setMessages((prev) => [...prev, userMsg]);
     setInputText('');
+    setReviewBanner(null);
     setIsLoading(true);
     setMicError(null);
 
@@ -173,6 +185,8 @@ export const VoiceAssistantPage: React.FC<VoiceAssistantPageProps> = ({
         text: response.display_text,
         speechText: response.speech_text,
         intent: response.intent,
+        confidenceStatus: response.confidence_status,
+        rawTranscript: response.raw_transcript,
         data: response.data,
         requiresConfirmation: response.requires_confirmation,
         actionPayload: response.action_payload,
@@ -374,6 +388,27 @@ export const VoiceAssistantPage: React.FC<VoiceAssistantPageProps> = ({
             {autoSpeak ? <Volume2 size={15} /> : <VolumeX size={15} />}
             <span>{autoSpeak ? 'Audio On' : 'Muted'}</span>
           </button>
+
+          <button
+            onClick={() => setReviewBeforeSend(!reviewBeforeSend)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 12px',
+              borderRadius: '6px',
+              border: '1px solid #e5e7eb',
+              background: reviewBeforeSend ? '#eff6ff' : '#f9fafb',
+              color: reviewBeforeSend ? '#1d4ed8' : '#6b7280',
+              fontSize: '0.82rem',
+              fontWeight: 500,
+              cursor: 'pointer',
+            }}
+            title={reviewBeforeSend ? 'Transcript review enabled: Check and edit spoken text before sending' : 'Auto-send enabled: Spoken commands send immediately'}
+          >
+            <Edit3 size={15} />
+            <span>{reviewBeforeSend ? 'Review Spoken Text: ON' : 'Auto-Send'}</span>
+          </button>
         </div>
       </div>
 
@@ -418,10 +453,30 @@ export const VoiceAssistantPage: React.FC<VoiceAssistantPageProps> = ({
               {/* Header badge if assistant */}
               {msg.sender === 'assistant' && (
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', borderBottom: '1px solid #f3f4f6', paddingBottom: '6px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                     <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#0891b2', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                       {msg.intent ? msg.intent.replace(/_/g, ' ') : 'StockSense AI'}
                     </span>
+                    {msg.confidenceStatus === 'CONFIRMED' && (
+                      <span style={{ fontSize: '0.68rem', fontWeight: 600, color: '#15803d', background: '#dcfce7', padding: '1px 6px', borderRadius: '4px' }}>
+                        Verified
+                      </span>
+                    )}
+                    {msg.confidenceStatus === 'NEEDS_CLARIFICATION' && (
+                      <span style={{ fontSize: '0.68rem', fontWeight: 600, color: '#c2410c', background: '#ffedd5', padding: '1px 6px', borderRadius: '4px' }}>
+                        Needs Clarification
+                      </span>
+                    )}
+                    {msg.confidenceStatus === 'AMBIGUOUS' && (
+                      <span style={{ fontSize: '0.68rem', fontWeight: 600, color: '#b45309', background: '#fef3c7', padding: '1px 6px', borderRadius: '4px' }}>
+                        Multiple Matches
+                      </span>
+                    )}
+                    {msg.confidenceStatus === 'UNSUPPORTED' && (
+                      <span style={{ fontSize: '0.68rem', fontWeight: 600, color: '#be123c', background: '#ffe4e6', padding: '1px 6px', borderRadius: '4px' }}>
+                        Unsupported Action
+                      </span>
+                    )}
                   </div>
                   {msg.speechText && (
                     <button
@@ -443,6 +498,13 @@ export const VoiceAssistantPage: React.FC<VoiceAssistantPageProps> = ({
                       <span>Speak</span>
                     </button>
                   )}
+                </div>
+              )}
+
+              {/* Spoken command review hint if present */}
+              {msg.rawTranscript && (
+                <div style={{ fontSize: '0.74rem', color: '#64748b', fontStyle: 'italic', marginBottom: '6px' }}>
+                  Spoken transcript: "{msg.rawTranscript}"
                 </div>
               )}
 
@@ -774,6 +836,44 @@ export const VoiceAssistantPage: React.FC<VoiceAssistantPageProps> = ({
             </button>
           ))}
         </div>
+
+        {/* Spoken Review Prompt Banner */}
+        {reviewBanner && (
+          <div
+            style={{
+              padding: '8px 12px',
+              borderRadius: '6px',
+              background: '#eff6ff',
+              border: '1px solid #bfdbfe',
+              color: '#1e40af',
+              fontSize: '0.82rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Edit3 size={15} />
+              <span>{reviewBanner}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setReviewBanner(null)}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#64748b',
+                cursor: 'pointer',
+                padding: '2px',
+                display: 'flex',
+                alignItems: 'center',
+              }}
+              title="Dismiss"
+            >
+              <XCircle size={15} />
+            </button>
+          </div>
+        )}
 
         {/* Form with Mic and Text Input */}
         <form
