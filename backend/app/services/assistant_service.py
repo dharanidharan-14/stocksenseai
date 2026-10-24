@@ -154,6 +154,30 @@ class AssistantService:
         return [p for p, _ in scored_matches]
 
     @classmethod
+    def _disambiguate_matches(cls, matched: List[Product], parsed: GeminiParsedIntent) -> List[Product]:
+        """
+        If multiple products matched, checks if the user's explicit keyword has a direct whole-word match
+        in the top product but not in the second product (e.g. 'atta' matches 'Aashirvaad Atta' but not
+        'Britannia Bread' which only matched a secondary synonym 'wheat').
+        """
+        if len(matched) <= 1:
+            return matched
+        user_kw = (parsed.product_raw or parsed.product_normalized or "").lower().strip()
+        if not user_kw:
+            return matched
+        in_top = bool(re.search(r"\b" + re.escape(user_kw) + r"\b", matched[0].name.lower()))
+        in_second = bool(re.search(r"\b" + re.escape(user_kw) + r"\b", matched[1].name.lower()))
+        if in_top and not in_second:
+            return [matched[0]]
+        alias = REGIONAL_ALIASES.get(user_kw)
+        if alias:
+            alias_in_top = bool(re.search(r"\b" + re.escape(alias) + r"\b", matched[0].name.lower()))
+            alias_in_second = bool(re.search(r"\b" + re.escape(alias) + r"\b", matched[1].name.lower()))
+            if alias_in_top and not alias_in_second:
+                return [matched[0]]
+        return matched
+
+    @classmethod
     def _apply_language_preference(
         cls,
         resp: AssistantResponse,
@@ -263,15 +287,20 @@ class AssistantService:
 
             elif intent == "RECEIVE_STOCK":
                 payload = resp.action_payload or data
-                pname = payload.get("product_name", "product")
-                qty = payload.get("quantity", 1)
-                unit = payload.get("unit", "packet")
+                pname = payload.get("product_name") or data.get("product_name", "product")
+                qty = payload.get("quantity") or data.get("quantity") or data.get("quantity_added", 1)
+                unit = payload.get("unit") or data.get("unit", "packet")
+                qty_clean = int(qty) if isinstance(qty, (int, float, Decimal)) and qty % 1 == 0 else qty
+                unit_str = f"{unit}s" if qty_clean != 1 and not unit.endswith("s") else unit
                 if resp.requires_confirmation:
-                    resp.spoken_reply_tanglish = f"{qty} {unit} {pname} stock add panna confirm pannalaama?"
-                    resp.spoken_reply_tamil = f"{qty} {unit} {pname} புதிய சரக்கு சேர்க்க உறுதிப்படுத்தலாமா?"
+                    resp.spoken_reply_tanglish = f"{qty_clean} {unit_str} {pname} stock add panna confirm pannalaama?"
+                    resp.spoken_reply_tamil = f"{qty_clean} {unit_str} {pname} புதிய சரக்கு சேர்க்க உறுதிப்படுத்தலாமா?"
+                    resp.spoken_reply_english = f"Add {qty_clean} {unit_str} of {pname} to stock? Please confirm."
                 else:
-                    resp.spoken_reply_tanglish = f"{qty} {unit} {pname} stock la add aayiduchu!"
-                    resp.spoken_reply_tamil = f"{qty} {unit} {pname} சரக்கு வெற்றிகரமாக சேர்க்கப்பட்டது!"
+                    batch_str = f" Batch number {data.get('batch_number')}." if data.get("batch_number") else ""
+                    resp.spoken_reply_tanglish = f"{qty_clean} {unit_str} {pname} stock la add aayiduchu!{batch_str}"
+                    resp.spoken_reply_tamil = f"{qty_clean} {unit_str} {pname} சரக்கு வெற்றிகரமாக சேர்க்கப்பட்டது!"
+                    resp.spoken_reply_english = f"Successfully received {qty_clean} {unit_str} of {pname} into stock.{batch_str}"
 
             elif intent == "ADD_TO_CART":
                 pname = data.get("product_name", "item")
@@ -666,6 +695,8 @@ class AssistantService:
                 raw_transcript=text,
                 suggestions=["Show all products currently out of stock", "Which products are running low?"]
             )
+
+        matched = cls._disambiguate_matches(matched, parsed)
 
         # Ambiguity guard: If multiple distinct products match and user query was generic (e.g. "milk")
         if len(matched) > 1:
@@ -1135,6 +1166,8 @@ class AssistantService:
                 suggestions=["Record a sale of 2 milk packets", "5 packet biscuit sale panniten"],
             )
 
+        matched = cls._disambiguate_matches(matched, parsed)
+
         # Ambiguity guard: check if generic term matched multiple products
         if len(matched) > 1:
             user_kw = (parsed.product_raw or parsed.product_normalized or "").lower().strip()
@@ -1266,6 +1299,8 @@ class AssistantService:
                 suggestions=["We received 20 biscuit packets", "10 kilo tomato vandhiruchu, stock update pannu"],
             )
 
+        matched = cls._disambiguate_matches(matched, parsed)
+
         # Ambiguity guard
         if len(matched) > 1:
             user_kw = (parsed.product_raw or parsed.product_normalized or "").lower().strip()
@@ -1383,6 +1418,8 @@ class AssistantService:
                 spoken_reply_tanglish="Endha product bill-la add pannanum? Product name sollunga.",
                 suggestions=["Add 2 Nandini milk to cart", "Add 1 kg sugar to bill"],
             )
+
+        matched = cls._disambiguate_matches(matched, parsed)
 
         if len(matched) > 1:
             user_kw = (parsed.product_raw or parsed.product_normalized or "").lower().strip()
@@ -1627,7 +1664,14 @@ class AssistantService:
                 intent="RECORD_SALE",
                 speech_text=speech,
                 display_text=display,
-                data={"sale_number": sale.sale_number, "total_amount": payload["line_total"]},
+                data={
+                    "sale_number": sale.sale_number,
+                    "total_amount": payload["line_total"],
+                    "product_name": payload["product_name"],
+                    "quantity": payload["quantity"],
+                    "unit": payload["unit"],
+                },
+                action_payload=payload,
             )
 
         elif action == "RECEIVE_STOCK":
@@ -1673,7 +1717,14 @@ class AssistantService:
                 intent="RECEIVE_STOCK",
                 speech_text=speech,
                 display_text=display,
-                data={"batch_number": batch.batch_number, "quantity_added": float(qty)},
+                data={
+                    "batch_number": batch.batch_number,
+                    "quantity_added": float(qty),
+                    "product_name": payload["product_name"],
+                    "quantity": float(qty),
+                    "unit": payload["unit"],
+                },
+                action_payload=payload,
             )
 
         return AssistantResponse(

@@ -30,7 +30,7 @@ The StockSense AI application ONLY supports the following backend operations:
 4. CHECK_EXPIRY: Checking batches expiring soon or expired (e.g. 'Naalaiku expire aagura items enna?').
 5. SALES_INFO: Inquiries about turnover, revenue, or items sold today/this week (e.g. 'Innaiku sales evlo?').
 6. AI_RECOMMENDATION: Asking what to purchase or asking for budget purchase advice (e.g. '2000 rooba budget la enna vaanganum?').
-7. RECEIVE_STOCK: Receiving new inventory batches (e.g. '10 kilo tomato vandhuruchu', 'We received 20 packets milk').
+7. RECEIVE_STOCK: Receiving new inventory batches or adding stock into inventory (e.g. 'Add stock 10 packets of milk', 'Add 10 packets milk to stock', '10 packet milk stock la add pannu', '10 kilo tomato vandhuruchu', 'We received 20 packets milk', 'Add 5 packets salt to stock', 'put 10 bottles ghee in stock', 'stock add pannu 10 packet milk'). NOTE: Adding to 'stock' or 'inventory' means RECEIVE_STOCK. Adding to 'cart' or 'bill' means ADD_TO_CART.
 8. RECORD_SALE: Recording customer sales at the counter (e.g. '5 packet biscuit sale panniten', 'Sold 2 packets milk').
 9. ADD_TO_CART: Adding an item to the current billing cart / counter bill (e.g. 'Add 2 packets of milk to bill', '2 packet milk cart la podu', 'Add 1 kg sugar to cart', 'Bill la 1 packet bread sethu').
 10. REMOVE_FROM_CART: Removing an item from the current billing cart (e.g. 'Remove milk from bill', 'Cart la irundhu biscuit eduthudu', 'Delete sugar from cart').
@@ -323,22 +323,63 @@ class GeminiParserService:
                 ),
             )
 
-        # 7. Receive stock
-        if any(w in text_lower for w in ["receive", "received", "vandhuruchu", "vandhiruchu", "stock receipt"]):
+        # 7. Receive stock / Inbound stock addition
+        receive_keywords = [
+            "receive", "received", "vandhuruchu", "vandhiruchu", "stock receipt",
+            "add stock", "add to stock", "into stock", "to stock", "in stock",
+            "to inventory", "into inventory", "add inventory",
+            "stock add", "stock la add", "stock-la add", "stock la sethu", "stock-la sethu",
+            "stock podu", "stock la podu", "put in stock", "put into stock", "sethu stock",
+        ]
+        is_receive_stock = any(w in text_lower for w in receive_keywords) or (
+            any(w in text_lower for w in ["add", "podu", "sethu", "put", "record"])
+            and any(w in text_lower for w in ["stock", "inventory"])
+            and not any(w in text_lower for w in ["cart", "bill", "basket"])
+        )
+        if is_receive_stock:
             nums = re.findall(r"\b\d+(?:\.\d+)?\b", text_lower)
             qty = Decimal(nums[0]) if nums else None
-            unit_match = re.search(r"\b(packet|packets|kg|kgs|bag|bags|bottle|bottles|tin|tins|piece|pieces|litre|litres)\b", text_lower)
+            unit_match = re.search(
+                r"\b(packet|packets|kg|kgs|bag|bags|bottle|bottles|tin|tins|piece|pieces|box|boxes|litre|litres|l|g|grams)\b",
+                text_lower,
+            )
             unit_val = unit_match.group(1) if unit_match else None
             prod = None
-            for candidate in ["biscuit", "milk", "rice", "tomato", "thakkali", "atta", "oil", "dal"]:
+            candidates = [
+                "toor dal", "moong dal", "toor", "moong", "paruppu", "dal", "dhal",
+                "surf excel", "surf", "detergent", "vim", "soap",
+                "maggi", "noodles", "parle-g", "parle", "biscuit",
+                "garam masala", "masala", "sunflower oil", "sunflower", "oil", "ennai",
+                "amul butter", "butter", "pure ghee", "ghee", "nei",
+                "amul milk", "taaza", "milk", "paal",
+                "basmati rice", "rice", "arisi",
+                "chakki atta", "atta", "aata", "gothumai",
+                "tata salt", "salt", "uppu",
+                "tata tea", "tea", "chaaya", "coffee",
+                "wheat bread", "bread", "rotti",
+                "tomato", "thakkali", "onion", "venkayam", "vengayam", "sugar", "sarkarai",
+            ]
+            for candidate in candidates:
                 if candidate in text_lower:
                     prod = candidate
                     break
+
+            if not prod:
+                m = re.search(r"(?:of|add|stock|receipt|received)\s+(\d+\s*(?:packet|packets|kg|kgs|bottle|bottles|piece|pieces|box|boxes|l|litre|litres)?\s*)?([a-zA-Z\s]+)", text_lower)
+                if m:
+                    extracted = m.group(2).strip()
+                    cleaned_tokens = [w for w in extracted.split() if w not in ["stock", "inventory", "add", "the", "a", "of", "to", "in", "into", "la", "pannu", "podu"]]
+                    if cleaned_tokens:
+                        prod = " ".join(cleaned_tokens)
+
             missing = []
             if qty is None:
                 missing.append("quantity")
             if not prod:
                 missing.append("product")
+
+            qty_clean = int(qty) if qty is not None and qty % 1 == 0 else qty
+            unit_str = f" {unit_val}" if unit_val else ""
 
             return GeminiParsedIntent(
                 intent="RECEIVE_STOCK",
@@ -348,12 +389,12 @@ class GeminiParserService:
                 unit=unit_val,
                 missing_parameters=missing,
                 spoken_reply_english=(
-                    f"Proposing stock receipt of {qty} {unit_val or ''} of {prod}. Please confirm."
+                    f"Proposing stock receipt of {qty_clean}{unit_str} of {prod}. Please confirm."
                     if not missing else
                     f"How many {unit_val or 'units'} of {prod or 'the product'} did you receive?"
                 ),
                 spoken_reply_tamil=(
-                    f"{qty} {unit_val or ''} {prod} stock receipt confirm pannunga."
+                    f"{qty_clean}{unit_str} {prod} stock receipt confirm pannunga."
                     if not missing else
                     f"{prod or 'Product'}-la ethanai alavu vandhadhu?"
                 ),
