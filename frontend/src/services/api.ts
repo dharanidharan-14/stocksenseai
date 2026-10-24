@@ -26,7 +26,7 @@ export const apiClient = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 6000,
+  timeout: 15000,
 });
 
 // Attach JWT token from localStorage if present
@@ -1172,13 +1172,17 @@ export const api = {
     language_preference: string = 'tanglish'
   ): Promise<AssistantResponse> {
     try {
-      const resp = await apiClient.post('/assistant/command', {
-        text,
-        confirmed,
-        action_payload,
-        session_id,
-        language_preference,
-      });
+      const resp = await apiClient.post(
+        '/assistant/command',
+        {
+          text,
+          confirmed,
+          action_payload,
+          session_id,
+          language_preference,
+        },
+        { timeout: 35000 }
+      );
       return resp.data;
     } catch (err: any) {
       console.error('Assistant API error:', err);

@@ -154,6 +154,193 @@ class AssistantService:
         return [p for p, _ in scored_matches]
 
     @classmethod
+    def _apply_language_preference(
+        cls,
+        resp: AssistantResponse,
+        language_preference: Optional[str] = "tanglish",
+        parsed: Optional[GeminiParsedIntent] = None,
+    ) -> AssistantResponse:
+        """
+        Guarantees that every AssistantResponse has accurate, natural spoken strings
+        for English, Tamil, and Tanglish, and assigns `speech_text` according to `language_preference`.
+        """
+        lang_pref = (language_preference or "tanglish").lower().strip()
+        intent = resp.intent
+        data = resp.data if isinstance(resp.data, dict) else {}
+
+        # 1. Base English
+        if not resp.spoken_reply_english:
+            resp.spoken_reply_english = resp.speech_text or resp.display_text
+
+        # 2. Derive Tanglish & Tamil if not already explicitly provided
+        if not resp.spoken_reply_tanglish or not resp.spoken_reply_tamil:
+            if intent == "CHECK_STOCK":
+                pname = data.get("product_name") or (parsed.product_normalized if parsed else "Product")
+                usable = data.get("usable_stock")
+                unit = data.get("unit", "packet")
+                if resp.confidence_status == "AMBIGUOUS":
+                    resp.spoken_reply_tanglish = "Palaveeru products match aagudhu. Endha brand venum nu sollunga bro."
+                    resp.spoken_reply_tamil = "பல பொருட்கள் பொருந்துகின்றன. எந்த பிராண்ட் வேண்டும் என்று கூறவும்."
+                elif resp.confidence_status == "NEEDS_CLARIFICATION" or usable is None:
+                    resp.spoken_reply_tanglish = "Endha product-oda stock paakanum nu sollunga bro."
+                    resp.spoken_reply_tamil = "எந்தப் பொருளின் இருப்பை சரிபார்க்க வேண்டும் என்று கூறவும்."
+                elif usable <= 0:
+                    resp.spoken_reply_tanglish = f"{pname} stock theerndhuduchu bro. Zero {unit} irukku."
+                    resp.spoken_reply_tamil = f"{pname} இருப்பு தீர்ந்துவிட்டது. 0 {unit} உள்ளது."
+                else:
+                    qty_str = int(usable) if usable % 1 == 0 else usable
+                    resp.spoken_reply_tanglish = f"{pname} usable stock {qty_str} {unit} irukku."
+                    resp.spoken_reply_tamil = f"{pname} பயன்பாட்டு இருப்பு {qty_str} {unit} உள்ளது."
+
+            elif intent == "CHECK_LOW_STOCK":
+                items = resp.data if isinstance(resp.data, list) else []
+                count = len(items)
+                if count == 0:
+                    resp.spoken_reply_tanglish = "Ippo entha item-um low stock la illa bro. Ella items-um safe level la irukku."
+                    resp.spoken_reply_tamil = "தற்போது எந்தப் பொருளும் குறைந்த இருப்பில் இல்லை. அனைத்தும் போதுமான அளவில் உள்ளன."
+                else:
+                    names = ", ".join([it.get("product_name", "").split()[0] for it in items[:3] if isinstance(it, dict)])
+                    resp.spoken_reply_tanglish = f"{count} items low stock la irukku: {names}. Reorder panna ready pannalaam."
+                    resp.spoken_reply_tamil = f"{count} பொருட்கள் குறைந்த இருப்பில் உள்ளன: {names}."
+
+            elif intent == "CHECK_OUT_OF_STOCK":
+                items = resp.data if isinstance(resp.data, list) else []
+                count = len(items)
+                if count == 0:
+                    resp.spoken_reply_tanglish = "Super! Out of stock items edhuvum illa. Ella inventory-um available."
+                    resp.spoken_reply_tamil = "இருப்பு தீர்ந்த பொருட்கள் எதுவும் இல்லை. அனைத்தும் கிடைக்கின்றன."
+                else:
+                    names = ", ".join([it.get("product_name", "").split()[0] for it in items[:3] if isinstance(it, dict)])
+                    resp.spoken_reply_tanglish = f"{count} items theerndhu pochu: {names}. Seekiram stock add pannanum."
+                    resp.spoken_reply_tamil = f"{count} பொருட்கள் தீர்ந்துவிட்டன: {names}."
+
+            elif intent == "CHECK_EXPIRY":
+                items = resp.data if isinstance(resp.data, list) else []
+                count = len(items)
+                if count == 0:
+                    resp.spoken_reply_tanglish = "Expire aagura batch edhuvum illa. Ella stock-um fresh ah irukku."
+                    resp.spoken_reply_tamil = "காலாவதியாகும் தொகுதிகள் எதுவும் இல்லை. அனைத்து இருப்புகளும் புதியவை."
+                else:
+                    names = ", ".join([it.get("product_name", "").split()[0] for it in items[:3] if isinstance(it, dict)])
+                    resp.spoken_reply_tanglish = f"{count} batches seekiram expire aagudhu: {names}. FEFO padi seekiram vithudunga."
+                    resp.spoken_reply_tamil = f"{count} பொருட்கள் விரைவில் காலாவதியாகின்றன: {names}."
+
+            elif intent == "SALES_INFO":
+                tot = data.get("total_sales", 0)
+                txns = data.get("total_transactions", 0)
+                resp.spoken_reply_tanglish = f"Innaiku sales mottham {tot:,.2f} rooba. {txns} transactions mudinjurukku."
+                resp.spoken_reply_tamil = f"இன்றைய மொத்த விற்பனை {tot:,.2f} ரூபாய். {txns} பரிவர்த்தனைகள் முடிந்துள்ளன."
+
+            elif intent in ["AI_RECOMMENDATION", "REORDER_RECOMMENDATIONS"]:
+                items = data.get("recommendations", []) if isinstance(data, dict) else (resp.data if isinstance(resp.data, list) else [])
+                count = len(items)
+                cost = data.get("total_estimated_cost", 0) if isinstance(data, dict) else 0
+                if count == 0:
+                    resp.spoken_reply_tanglish = "Ella inventory-um safe ah irukku. Ippo edhuvum reorder panna theva illa."
+                    resp.spoken_reply_tamil = "அனைத்து இருப்புகளும் பாதுகாப்பாக உள்ளன. மறுஆர்டர் செய்ய தேவையில்லை."
+                else:
+                    cost_str = f" Estimated cost {cost:,.2f} rooba." if cost else ""
+                    cost_ta = f" மொத்த மதிப்பு {cost:,.2f} ரூபாய்." if cost else ""
+                    resp.spoken_reply_tanglish = f"Innaiku {count} items reorder panna recommend panren.{cost_str}"
+                    resp.spoken_reply_tamil = f"இன்று {count} பொருட்களை மறுஆர்டர் செய்ய பரிந்துரைக்கப்படுகிறது.{cost_ta}"
+
+            elif intent == "RECORD_SALE":
+                payload = resp.action_payload or data
+                pname = payload.get("product_name", "product")
+                qty = payload.get("quantity", 1)
+                unit = payload.get("unit", "packet")
+                amt = payload.get("line_total") or payload.get("total_amount") or 0
+                if resp.requires_confirmation:
+                    amt_str = f" Total {amt:,.2f} rooba." if amt else ""
+                    amt_ta = f" மொத்த தொகை {amt:,.2f} ரூபாய்." if amt else ""
+                    resp.spoken_reply_tanglish = f"{qty} {unit} {pname} sale record panna confirm pannalaama?{amt_str}"
+                    resp.spoken_reply_tamil = f"{qty} {unit} {pname} விற்பனையை உறுதிப்படுத்தலாமா?{amt_ta}"
+                else:
+                    amt_str = f" Bill amount {amt:,.2f} rooba." if amt else ""
+                    amt_ta = f" தொகை {amt:,.2f} ரூபாய்." if amt else ""
+                    resp.spoken_reply_tanglish = f"{qty} {unit} {pname} sale record aayiduchu!{amt_str}"
+                    resp.spoken_reply_tamil = f"{qty} {unit} {pname} விற்பனை வெற்றிகரமாக பதிவு செய்யப்பட்டது!{amt_ta}"
+
+            elif intent == "RECEIVE_STOCK":
+                payload = resp.action_payload or data
+                pname = payload.get("product_name", "product")
+                qty = payload.get("quantity", 1)
+                unit = payload.get("unit", "packet")
+                if resp.requires_confirmation:
+                    resp.spoken_reply_tanglish = f"{qty} {unit} {pname} stock add panna confirm pannalaama?"
+                    resp.spoken_reply_tamil = f"{qty} {unit} {pname} புதிய சரக்கு சேர்க்க உறுதிப்படுத்தலாமா?"
+                else:
+                    resp.spoken_reply_tanglish = f"{qty} {unit} {pname} stock la add aayiduchu!"
+                    resp.spoken_reply_tamil = f"{qty} {unit} {pname} சரக்கு வெற்றிகரமாக சேர்க்கப்பட்டது!"
+
+            elif intent == "ADD_TO_CART":
+                pname = data.get("product_name", "item")
+                qty = data.get("quantity", 1)
+                unit = data.get("unit", "packet")
+                tot = data.get("cart_total", 0)
+                tot_str = f" Current bill total {tot:,.2f} rooba." if tot else ""
+                tot_ta = f" மொத்த பில் {tot:,.2f} ரூபாய்." if tot else ""
+                resp.spoken_reply_tanglish = f"{qty} {unit} {pname} bill cart la add panniten.{tot_str}"
+                resp.spoken_reply_tamil = f"{qty} {unit} {pname} பில் பட்டியலில் சேர்க்கப்பட்டது.{tot_ta}"
+
+            elif intent == "REMOVE_FROM_CART":
+                pname = data.get("product_name", "item")
+                tot = data.get("cart_total", 0)
+                tot_str = f" Current bill total {tot:,.2f} rooba." if tot else ""
+                resp.spoken_reply_tanglish = f"{pname} cart la irundhu eduthuten.{tot_str}"
+                resp.spoken_reply_tamil = f"{pname} பட்டியலிலிருந்து நீக்கப்பட்டது."
+
+            elif intent == "CHECK_BILL_TOTAL":
+                tot = data.get("cart_total", 0)
+                cnt = data.get("item_count", 0)
+                resp.spoken_reply_tanglish = f"Current bill la {cnt} items irukku. Grand total {tot:,.2f} rooba."
+                resp.spoken_reply_tamil = f"தற்போதைய பில் தொகை {tot:,.2f} ரூபாய் ({cnt} பொருட்கள்)."
+
+            elif intent == "CLEAR_BILL":
+                resp.spoken_reply_tanglish = "Counter bill clear panniten. Cart ippo empty ah irukku."
+                resp.spoken_reply_tamil = "பில் வெற்றிகரமாக அழிக்கப்பட்டது. கூடை காலியாக உள்ளது."
+
+            elif intent == "DISCOUNT_OR_OFFER":
+                resp.spoken_reply_tanglish = "StockSense AI la discount / offer management support illa bro. Prices and inventory maathala."
+                resp.spoken_reply_tamil = "தள்ளுபடி அல்லது சலுகை மேலாண்மை ஆதரிக்கப்படவில்லை. மாற்றங்கள் எதுவும் செய்யப்படவில்லை."
+
+            elif intent == "PRICE_MODIFICATION":
+                resp.spoken_reply_tanglish = "Voice moolama vilai maatha mudiyaadhu bro. Product Management page la edit pannunga."
+                resp.spoken_reply_tamil = "குரல் வழியாக விலையை மாற்ற முடியாது. தயாரிப்பு பக்கத்தில் மாற்றவும்."
+
+            elif intent == "UNSUPPORTED":
+                resp.spoken_reply_tanglish = "Indha action StockSense AI la support illa bro. Stock, sales, alladhu billing patri kekkalaam."
+                resp.spoken_reply_tamil = "இந்த நடவடிக்கை ஆதரிக்கப்படவில்லை. இருப்பு அல்லது விற்பனை பற்றி கேட்கலாம்."
+
+            elif intent == "CONFIRMATION":
+                resp.spoken_reply_tanglish = "Sari, transaction confirm panniyachu!"
+                resp.spoken_reply_tamil = "சரி, உறுதிசெய்யப்பட்டது!"
+
+            elif intent == "CANCELLATION":
+                resp.spoken_reply_tanglish = "Transaction cancel panniten. Endha changeyum seyyala."
+                resp.spoken_reply_tamil = "நடவடிக்கை ரத்து செய்யப்பட்டது."
+
+            else:
+                resp.spoken_reply_tanglish = (
+                    parsed.spoken_reply_tamil if (parsed and parsed.spoken_reply_tamil)
+                    else "Puriyala bro. Stock, sales, alladhu counter bill patri kekkalaam."
+                )
+                resp.spoken_reply_tamil = (
+                    parsed.spoken_reply_tamil if (parsed and parsed.spoken_reply_tamil)
+                    else "எனக்கு புரியவில்லை. இருப்பு, விற்பனை அல்லது பில் பற்றி கேட்கலாம்."
+                )
+
+        # 3. Finally, assign speech_text according to language preference
+        if lang_pref in ["tanglish", "thanglish"]:
+            resp.speech_text = resp.spoken_reply_tanglish or resp.speech_text
+        elif lang_pref == "tamil":
+            resp.speech_text = resp.spoken_reply_tamil or resp.speech_text
+        else: # english
+            resp.speech_text = resp.spoken_reply_english or resp.speech_text
+
+        return resp
+
+    @classmethod
     async def process_command(
         cls,
         db: AsyncSession,
@@ -178,6 +365,7 @@ class AssistantService:
         if confirmed and action_payload:
             resp = await cls._execute_confirmed_action(db, action_payload)
             SessionStore.clear_pending_proposal(session_id)
+            cls._apply_language_preference(resp, language_preference)
             SessionStore.append_turn(session_id, "assistant", resp.speech_text)
             return resp
 
@@ -203,6 +391,7 @@ class AssistantService:
                 spoken_reply_tanglish="Transaction cancel aaidichu.",
                 suggestions=["How much rice stock is left?", "What should I reorder today?"]
             )
+            cls._apply_language_preference(resp, language_preference, parsed)
             SessionStore.append_turn(session_id, "assistant", resp.speech_text)
             return resp
 
@@ -212,6 +401,7 @@ class AssistantService:
             if pending:
                 resp = await cls._execute_confirmed_action(db, pending)
                 SessionStore.clear_pending_proposal(session_id)
+                cls._apply_language_preference(resp, language_preference, parsed)
                 SessionStore.append_turn(session_id, "assistant", resp.speech_text)
                 return resp
             else:
@@ -224,6 +414,7 @@ class AssistantService:
                     spoken_reply_tanglish="Confirm panna pending transaction edhuvum illa.",
                     suggestions=["How much rice stock is left?", "Record a sale of 2 milk packets"]
                 )
+                cls._apply_language_preference(resp, language_preference, parsed)
                 SessionStore.append_turn(session_id, "assistant", resp.speech_text)
                 return resp
 
@@ -272,6 +463,7 @@ class AssistantService:
                     spoken_reply_tanglish=f"{pending['quantity']} {pending['unit']} {pending['product_name']}-a update pannittaen. Confirm pannalaamaa?",
                     suggestions=["Aama, confirm pannu", "Cancel pannidu"]
                 )
+                cls._apply_language_preference(resp, language_preference, parsed)
                 SessionStore.append_turn(session_id, "assistant", resp.speech_text)
                 return resp
 
@@ -344,16 +536,7 @@ class AssistantService:
             )
 
         resp.raw_transcript = text
-
-        # Select speech text based on user language preference
-        lang_pref = (language_preference or "tanglish").lower()
-        if lang_pref == "tamil" and getattr(resp, "spoken_reply_tamil", None):
-            resp.speech_text = resp.spoken_reply_tamil
-        elif lang_pref == "english" and getattr(resp, "spoken_reply_english", None):
-            resp.speech_text = resp.spoken_reply_english
-        elif lang_pref in ["tanglish", "thanglish"] and getattr(resp, "spoken_reply_tanglish", None):
-            resp.speech_text = resp.spoken_reply_tanglish
-
+        cls._apply_language_preference(resp, language_preference, parsed)
         SessionStore.append_turn(session_id, "assistant", resp.speech_text)
         return resp
 
