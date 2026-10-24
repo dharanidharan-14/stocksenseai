@@ -163,7 +163,7 @@ export function App() {
           isLoading={isLoading}
         />
 
-        <main style={{ flex: 1, padding: '28px 32px', maxWidth: '1440px', width: '100%', margin: '0 auto' }}>
+        <main style={{ flex: 1, padding: '24px 28px', maxWidth: '1440px', width: '100%', margin: '0 auto', boxSizing: 'border-box', minWidth: 0 }}>
           {currentTab === 'dashboard' && (
             <DashboardPage
               stats={stats}

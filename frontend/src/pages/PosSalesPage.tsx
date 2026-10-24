@@ -149,9 +149,9 @@ export const PosSalesPage: React.FC<PosSalesPageProps> = ({
   };
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 390px', gap: '24px', alignItems: 'start' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 360px', gap: '20px', alignItems: 'start', width: '100%' }}>
       {/* Left: Product Grid with Images */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', minWidth: 0 }}>
         {/* Search & Category Filter Bar */}
         <div className="glass-card" style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
           <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
@@ -194,7 +194,7 @@ export const PosSalesPage: React.FC<PosSalesPageProps> = ({
         </div>
 
         {/* Visual Product Cards Grid */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: '16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '14px' }}>
           {filteredProducts.map((prod) => {
             const stock = prod.usable_stock ?? (prod as any).current_stock ?? 0;
             const isOutOfStock = stock <= 0;
@@ -224,7 +224,7 @@ export const PosSalesPage: React.FC<PosSalesPageProps> = ({
                 }}
               >
                 {/* Product Image Header */}
-                <div style={{ position: 'relative', width: '100%', height: '130px', backgroundColor: '#f8fafc', overflow: 'hidden' }}>
+                <div style={{ position: 'relative', width: '100%', height: '120px', backgroundColor: '#f1f5f9', overflow: 'hidden' }}>
                   <img
                     src={getProductImageUrl(prod.image_url)}
                     alt={prod.name}
@@ -232,8 +232,7 @@ export const PosSalesPage: React.FC<PosSalesPageProps> = ({
                     style={{
                       width: '100%',
                       height: '100%',
-                      objectFit: 'contain',
-                      padding: '8px',
+                      objectFit: 'cover',
                       transition: 'transform 0.2s ease',
                     }}
                   />
