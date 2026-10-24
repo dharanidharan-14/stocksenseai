@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Layers,
   Plus,
@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { InventoryBatch, StockMovement, Product } from '../types';
 import { api } from '../services/api';
+import { getProductImageUrl, onProductImageError } from '../utils/imageHelper';
 
 interface InventoryPageProps {
   batches: InventoryBatch[];
@@ -36,6 +37,8 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
   const [batchNo, setBatchNo] = useState<string>(`BAT-${Date.now().toString().slice(-6)}`);
   const [expiryDate, setExpiryDate] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const productMap = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
 
   const filteredBatches = batches.filter((b) =>
     (b.product_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -151,6 +154,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
                 {filteredBatches.map((batch) => {
                   const isExpiringSoon = batch.days_to_expiry !== undefined && batch.days_to_expiry <= 3;
                   const isDepleted = batch.remaining_quantity <= 0;
+                  const prod = productMap.get(batch.product_id);
 
                   return (
                     <tr key={batch.id} style={{ opacity: isDepleted ? 0.5 : 1 }}>
@@ -160,9 +164,32 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
                         </span>
                       </td>
                       <td>
-                        <span style={{ fontWeight: 600, color: '#111827' }}>
-                          {batch.product_name || `Product #${batch.product_id}`}
-                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <img
+                            src={getProductImageUrl(prod?.image_url)}
+                            alt={batch.product_name || 'Product'}
+                            onError={onProductImageError}
+                            style={{
+                              width: '38px',
+                              height: '38px',
+                              borderRadius: '6px',
+                              objectFit: 'cover',
+                              border: '1px solid #e2e8f0',
+                              backgroundColor: '#f8fafc',
+                              flexShrink: 0,
+                            }}
+                          />
+                          <div>
+                            <span style={{ fontWeight: 600, color: '#111827', display: 'block' }}>
+                              {batch.product_name || `Product #${batch.product_id}`}
+                            </span>
+                            {prod?.sku && (
+                              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                                {prod.sku}
+                              </span>
+                            )}
+                          </div>
+                        </div>
                       </td>
                       <td>{batch.received_quantity}</td>
                       <td>
@@ -224,15 +251,32 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
               <tbody>
                 {filteredMovements.map((mov) => {
                   const isPositive = mov.quantity > 0;
+                  const prod = productMap.get(mov.product_id);
                   return (
                     <tr key={mov.id}>
                       <td style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
                         {mov.created_at ? new Date(mov.created_at).toLocaleString('en-IN') : '-'}
                       </td>
                       <td>
-                        <span style={{ fontWeight: 600, color: '#111827' }}>
-                          {mov.product_name || `Product #${mov.product_id}`}
-                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <img
+                            src={getProductImageUrl(prod?.image_url)}
+                            alt={mov.product_name || 'Product'}
+                            onError={onProductImageError}
+                            style={{
+                              width: '32px',
+                              height: '32px',
+                              borderRadius: '6px',
+                              objectFit: 'cover',
+                              border: '1px solid #e2e8f0',
+                              backgroundColor: '#f8fafc',
+                              flexShrink: 0,
+                            }}
+                          />
+                          <span style={{ fontWeight: 600, color: '#111827' }}>
+                            {mov.product_name || `Product #${mov.product_id}`}
+                          </span>
+                        </div>
                       </td>
                       <td>
                         <span className={`badge ${mov.movement_type === 'RECEIPT' || mov.movement_type === 'OPENING' ? 'badge-low' : 'badge-medium'}`}>
@@ -274,21 +318,38 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
                 <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
                   Product
                 </label>
-                <select
-                  value={selectedProductId}
-                  onChange={(e) => {
-                    const id = Number(e.target.value);
-                    setSelectedProductId(id);
-                    const p = products.find((prod) => prod.id === id);
-                    if (p) setReceiptCost(p.purchase_cost);
-                  }}
-                >
-                  {products.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} ({p.sku})
-                    </option>
-                  ))}
-                </select>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <img
+                    src={getProductImageUrl(productMap.get(selectedProductId)?.image_url)}
+                    alt="Selected Product"
+                    onError={onProductImageError}
+                    style={{
+                      width: '44px',
+                      height: '44px',
+                      borderRadius: '8px',
+                      objectFit: 'cover',
+                      border: '1px solid #e2e8f0',
+                      backgroundColor: '#f8fafc',
+                      flexShrink: 0,
+                    }}
+                  />
+                  <select
+                    style={{ flex: 1 }}
+                    value={selectedProductId}
+                    onChange={(e) => {
+                      const id = Number(e.target.value);
+                      setSelectedProductId(id);
+                      const p = products.find((prod) => prod.id === id);
+                      if (p) setReceiptCost(p.purchase_cost);
+                    }}
+                  >
+                    {products.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} ({p.sku})
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>

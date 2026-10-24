@@ -32,9 +32,13 @@ The StockSense AI application ONLY supports the following backend operations:
 6. AI_RECOMMENDATION: Asking what to purchase or asking for budget purchase advice (e.g. '2000 rooba budget la enna vaanganum?').
 7. RECEIVE_STOCK: Receiving new inventory batches (e.g. '10 kilo tomato vandhuruchu', 'We received 20 packets milk').
 8. RECORD_SALE: Recording customer sales at the counter (e.g. '5 packet biscuit sale panniten', 'Sold 2 packets milk').
-9. CONFIRMATION: Confirming a pending proposal ('Aama', 'Yes', 'Confirm pannu', 'Sari', 'Proceed').
-10. CANCELLATION: Cancelling/aborting a proposal ('Cancel pannidu', 'Vendaam', 'Stop', 'No').
-11. CORRECTION: Modifying quantity/unit of pending proposal ('Illa, 5 illa 3 packet', 'Actually 10 kg mattum').
+9. ADD_TO_CART: Adding an item to the current billing cart / counter bill (e.g. 'Add 2 packets of milk to bill', '2 packet milk cart la podu', 'Add 1 kg sugar to cart', 'Bill la 1 packet bread sethu').
+10. REMOVE_FROM_CART: Removing an item from the current billing cart (e.g. 'Remove milk from bill', 'Cart la irundhu biscuit eduthudu', 'Delete sugar from cart').
+11. CHECK_BILL_TOTAL: Checking the grand total or item count of the current bill (e.g. 'What is the bill total?', 'Total bill evlo aachu?', 'Check cart total').
+12. CLEAR_BILL: Clearing all items from the current bill (e.g. 'Clear the bill', 'Empty cart', 'Bill clear pannu', 'Basket clear pannidu').
+13. CONFIRMATION: Confirming a pending proposal ('Aama', 'Yes', 'Confirm pannu', 'Sari', 'Proceed').
+14. CANCELLATION: Cancelling/aborting a proposal ('Cancel pannidu', 'Vendaam', 'Stop', 'No').
+15. CORRECTION: Modifying quantity/unit of pending proposal ('Illa, 5 illa 3 packet', 'Actually 10 kg mattum').
 
 EXPLICITLY UNSUPPORTED OPERATIONS (MUST BE CLASSIFIED ACCORDINGLY):
 - DISCOUNT_OR_OFFER: Asking to add, remove, calculate, or modify discounts, promotional offers, percentage off, or coupon deals (e.g. 'Remove the 20 percent offer on this product', 'Give 10% discount on dal').
@@ -230,7 +234,60 @@ class GeminiParserService:
                 spoken_reply_tamil=f"Alavu {qty} {unit_val or ''}-a maathittaen. Confirm pannalaamaa?",
             )
 
-        # 6. Record sale
+        # 6. Cart Billing Intents
+        if any(w in text_lower for w in ["clear bill", "clear cart", "empty cart", "empty the cart", "empty basket", "bill clear", "cart clear", "bill cancel", "bill reset"]):
+            return GeminiParsedIntent(
+                intent="CLEAR_BILL",
+                spoken_reply_english="Would you like to clear the entire bill? Please confirm.",
+                spoken_reply_tamil="Bill mothama clear panna porom. Confirm pannunga.",
+            )
+
+        if any(w in text_lower for w in ["bill total", "total bill", "cart total", "bill evlo", "cart evlo", "total amount in bill", "check bill"]):
+            return GeminiParsedIntent(
+                intent="CHECK_BILL_TOTAL",
+                spoken_reply_english="Checking your current bill total.",
+                spoken_reply_tamil="Current bill total paakkuren.",
+            )
+
+        if any(w in text_lower for w in ["remove from cart", "remove from bill", "cart la irundhu", "bill la irundhu", "delete from cart", "delete from bill", "take out from cart", "cart la eduthudu", "bill la remove"]):
+            prod = None
+            for candidate in ["milk", "rice", "tomato", "thakkali", "biscuit", "atta", "oil", "dal", "sugar", "salt", "ghee", "bread", "soap"]:
+                if candidate in text_lower:
+                    prod = candidate
+                    break
+            missing = ["product"] if not prod else []
+            return GeminiParsedIntent(
+                intent="REMOVE_FROM_CART",
+                product_raw=prod,
+                product_normalized=prod.capitalize() if prod else None,
+                missing_parameters=missing,
+                spoken_reply_english=f"Removing {prod or 'item'} from the bill." if prod else "Which item should I remove from the bill?",
+                spoken_reply_tamil=f"{prod or 'Item'}-a bill-la irundhu remove panren." if prod else "Endha item-a bill la irundhu remove pannanum?",
+            )
+
+        if any(w in text_lower for w in ["add to cart", "add to bill", "cart la podu", "bill la podu", "cart la sethu", "bill la sethu", "cart la add", "bill la add", "put in bill", "put in cart", "cart-la", "bill-la"]):
+            nums = re.findall(r"\b\d+(?:\.\d+)?\b", text_lower)
+            qty = Decimal(nums[0]) if nums else Decimal("1")
+            unit_match = re.search(r"\b(packet|packets|kg|kgs|bag|bags|bottle|bottles|tin|tins|piece|pieces|litre|litres)\b", text_lower)
+            unit_val = unit_match.group(1) if unit_match else None
+            prod = None
+            for candidate in ["milk", "rice", "tomato", "thakkali", "biscuit", "atta", "oil", "dal", "sugar", "salt", "ghee", "bread", "soap"]:
+                if candidate in text_lower:
+                    prod = candidate
+                    break
+            missing = ["product"] if not prod else []
+            return GeminiParsedIntent(
+                intent="ADD_TO_CART",
+                product_raw=prod,
+                product_normalized=prod.capitalize() if prod else None,
+                quantity=float(qty),
+                unit=unit_val,
+                missing_parameters=missing,
+                spoken_reply_english=f"Adding {qty} {unit_val or ''} of {prod or 'item'} to the bill." if prod else "Which product would you like to add to the bill?",
+                spoken_reply_tamil=f"{qty} {unit_val or ''} {prod or 'item'} bill la sethuten." if prod else "Endha product bill la add pannanum?",
+            )
+
+        # 7. Record sale
         if any(w in text_lower for w in ["record sale", "vithuten", "sold", "sale pannu", "sale of"]):
             nums = re.findall(r"\b\d+(?:\.\d+)?\b", text_lower)
             qty = Decimal(nums[0]) if nums else None

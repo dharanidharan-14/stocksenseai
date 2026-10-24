@@ -11,9 +11,13 @@ import {
   Receipt,
   Store,
   Tag,
+  AlertTriangle,
+  X,
+  RotateCcw,
 } from 'lucide-react';
 import { Product, Sale, ClearancePromotion } from '../types';
 import { api } from '../services/api';
+import { getProductImageUrl, onProductImageError } from '../utils/imageHelper';
 
 interface PosSalesPageProps {
   products: Product[];
@@ -36,6 +40,7 @@ export const PosSalesPage: React.FC<PosSalesPageProps> = ({
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [completedSale, setCompletedSale] = useState<Sale | null>(null);
+  const [isClearModalOpen, setIsClearModalOpen] = useState(false);
 
   // Categories
   const categories = ['all', ...Array.from(new Set(products.map((p) => p.category_name || 'Other')))];
@@ -104,7 +109,10 @@ export const PosSalesPage: React.FC<PosSalesPageProps> = ({
     setCart((prev) => prev.filter((item) => item.product.id !== productId));
   };
 
-  const clearCart = () => setCart([]);
+  const handleConfirmClear = () => {
+    setCart([]);
+    setIsClearModalOpen(false);
+  };
 
   const subtotal = cart.reduce((sum, item) => {
     const pricing = getProductPricing(item.product);
@@ -141,35 +149,51 @@ export const PosSalesPage: React.FC<PosSalesPageProps> = ({
   };
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: '24px', alignItems: 'start' }}>
-      {/* Left: Product Selector */}
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 390px', gap: '24px', alignItems: 'start' }}>
+      {/* Left: Product Grid with Images */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
         {/* Search & Category Filter Bar */}
-        <div className="glass-card" style={{ padding: '16px 20px', display: 'flex', gap: '14px', alignItems: 'center' }}>
-          <div style={{ position: 'relative', flex: 1 }}>
-            <Search size={18} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#64748b' }} />
-            <input
-              type="text"
-              placeholder="Search products by name or SKU (e.g. Atta, Salt, Milk)..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              style={{ paddingLeft: '40px' }}
-            />
+        <div className="glass-card" style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
+            <div style={{ position: 'relative', flex: 1 }}>
+              <Search size={18} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#64748b' }} />
+              <input
+                type="text"
+                placeholder="Search products by name or SKU (e.g. Atta, Salt, Milk)..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                style={{ paddingLeft: '40px', width: '100%' }}
+              />
+            </div>
           </div>
-          <select
-            value={selectedCategory}
-            onChange={(e) => setSelectedCategory(e.target.value)}
-            style={{ width: '180px' }}
-          >
+
+          {/* Category Filter Pills */}
+          <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '4px' }}>
             {categories.map((c) => (
-              <option key={c} value={c}>
-                {c === 'all' ? 'All Categories' : c}
-              </option>
+              <button
+                key={c}
+                type="button"
+                onClick={() => setSelectedCategory(c)}
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: '20px',
+                  border: selectedCategory === c ? '1px solid #4f46e5' : '1px solid #e2e8f0',
+                  background: selectedCategory === c ? '#4f46e5' : '#ffffff',
+                  color: selectedCategory === c ? '#ffffff' : '#475569',
+                  fontSize: '0.78rem',
+                  fontWeight: selectedCategory === c ? 700 : 500,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                {c === 'all' ? 'All Products' : c}
+              </button>
             ))}
-          </select>
+          </div>
         </div>
 
-        {/* Product Cards Grid */}
+        {/* Visual Product Cards Grid */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: '16px' }}>
           {filteredProducts.map((prod) => {
             const stock = prod.usable_stock ?? (prod as any).current_stock ?? 0;
@@ -183,93 +207,148 @@ export const PosSalesPage: React.FC<PosSalesPageProps> = ({
                 className="glass-card"
                 onClick={() => !isOutOfStock && addToCart(prod)}
                 style={{
-                  padding: '16px',
+                  padding: '0',
                   display: 'flex',
                   flexDirection: 'column',
-                  justifyContent: 'space-between',
+                  overflow: 'hidden',
                   cursor: isOutOfStock ? 'not-allowed' : 'pointer',
                   opacity: isOutOfStock ? 0.6 : 1,
                   position: 'relative',
-                  border: pricing.hasDiscount
+                  border: cartItem
+                    ? '2px solid #4f46e5'
+                    : pricing.hasDiscount
                     ? '1px solid #fde68a'
-                    : cartItem
-                    ? '1px solid #0891b2'
                     : '1px solid #e5e7eb',
-                  background: pricing.hasDiscount
-                    ? '#fffbeb'
-                    : cartItem
-                    ? '#ecfeff'
-                    : '#ffffff',
+                  background: cartItem ? '#f8faff' : '#ffffff',
+                  transition: 'transform 0.15s ease, box-shadow 0.15s ease',
                 }}
               >
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                    <span style={{ fontSize: '0.7rem', color: '#6b7280', fontFamily: 'var(--font-mono)' }}>
-                      {prod.sku}
-                    </span>
-                    <span style={{
-                      fontSize: '0.7rem',
-                      fontWeight: 600,
-                      color: isOutOfStock ? '#e02424' : stock < 10 ? '#d97706' : '#0e9f6e',
-                    }}>
-                      {isOutOfStock ? 'Out of Stock' : `${stock} ${prod.unit} left`}
-                    </span>
+                {/* Product Image Header */}
+                <div style={{ position: 'relative', width: '100%', height: '130px', backgroundColor: '#f8fafc', overflow: 'hidden' }}>
+                  <img
+                    src={getProductImageUrl(prod.image_url)}
+                    alt={prod.name}
+                    onError={onProductImageError}
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      objectFit: 'contain',
+                      padding: '8px',
+                      transition: 'transform 0.2s ease',
+                    }}
+                  />
+                  {/* Stock Badge Overlay */}
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: '8px',
+                      right: '8px',
+                      padding: '3px 8px',
+                      borderRadius: '12px',
+                      fontSize: '0.68rem',
+                      fontWeight: 700,
+                      background: isOutOfStock
+                        ? '#fee2e2'
+                        : stock < 10
+                        ? '#fef3c7'
+                        : '#d1fae5',
+                      color: isOutOfStock
+                        ? '#b91c1c'
+                        : stock < 10
+                        ? '#b45309'
+                        : '#047857',
+                      border: `1px solid ${
+                        isOutOfStock
+                          ? '#fca5a5'
+                          : stock < 10
+                          ? '#fcd34d'
+                          : '#6ee7b7'
+                      }`,
+                    }}
+                  >
+                    {isOutOfStock ? 'Out of Stock' : `${stock} ${prod.unit}s`}
                   </div>
 
                   {pricing.hasDiscount && (
-                    <div style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                      background: '#fef3c7',
-                      color: '#92400e',
-                      border: '1px solid #fde68a',
-                      padding: '2px 6px',
-                      borderRadius: '4px',
-                      fontSize: '0.68rem',
-                      fontWeight: 700,
-                      marginBottom: '6px',
-                    }}>
-                      <Tag size={11} /> {pricing.discountPct}% CLEARANCE
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: '8px',
+                        left: '8px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        background: '#f59e0b',
+                        color: '#ffffff',
+                        padding: '3px 7px',
+                        borderRadius: '4px',
+                        fontSize: '0.68rem',
+                        fontWeight: 800,
+                      }}
+                    >
+                      <Tag size={10} /> {pricing.discountPct}% OFF
                     </div>
                   )}
-
-                  <h4 style={{ fontSize: '0.9rem', fontWeight: 700, color: '#111827', lineHeight: 1.3, marginBottom: '4px' }}>
-                    {prod.name}
-                  </h4>
-                  <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
-                    {prod.category_name}
-                  </div>
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px', paddingTop: '10px', borderTop: '1px solid #e5e7eb' }}>
+                {/* Card Body */}
+                <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', flex: 1, justifyContent: 'space-between' }}>
                   <div>
-                    {pricing.hasDiscount ? (
-                      <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
-                        <span style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0e9f6e' }}>
-                          ₹{pricing.unitPrice.toFixed(2)}
-                        </span>
-                        <span style={{ fontSize: '0.78rem', color: '#9ca3af', textDecoration: 'line-through' }}>
-                          ₹{pricing.originalPrice.toFixed(2)}
-                        </span>
-                      </div>
-                    ) : (
-                      <span style={{ fontSize: '1.15rem', fontWeight: 800, color: '#111827' }}>
-                        ₹{prod.selling_price.toFixed(2)}
-                      </span>
-                    )}
+                    <div style={{ fontSize: '0.7rem', color: '#64748b', fontFamily: 'var(--font-mono)' }}>
+                      {prod.sku} • {prod.category_name}
+                    </div>
+                    <h4
+                      style={{
+                        fontSize: '0.9rem',
+                        fontWeight: 700,
+                        color: '#111827',
+                        lineHeight: 1.3,
+                        margin: '4px 0 8px 0',
+                        minHeight: '2.4em',
+                      }}
+                      title={prod.name}
+                    >
+                      {prod.name}
+                    </h4>
                   </div>
-                  <button
-                    className={`btn ${cartItem ? 'btn-primary' : 'btn-secondary'}`}
-                    disabled={isOutOfStock}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      addToCart(prod);
-                    }}
-                    style={{ padding: '6px 12px', fontSize: '0.75rem' }}
-                  >
-                    <Plus size={14} /> {cartItem ? `(${cartItem.quantity})` : 'Add'}
-                  </button>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '8px', borderTop: '1px solid #f1f5f9' }}>
+                    <div>
+                      {pricing.hasDiscount ? (
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
+                          <span style={{ fontSize: '1.1rem', fontWeight: 800, color: '#059669' }}>
+                            ₹{pricing.unitPrice.toFixed(2)}
+                          </span>
+                          <span style={{ fontSize: '0.75rem', color: '#94a3b8', textDecoration: 'line-through' }}>
+                            ₹{pricing.originalPrice.toFixed(2)}
+                          </span>
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: '1.1rem', fontWeight: 800, color: '#111827' }}>
+                          ₹{prod.selling_price.toFixed(2)}
+                        </span>
+                      )}
+                    </div>
+
+                    <button
+                      className={`btn ${cartItem ? 'btn-primary' : 'btn-secondary'}`}
+                      disabled={isOutOfStock}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        addToCart(prod);
+                      }}
+                      style={{
+                        padding: '6px 12px',
+                        fontSize: '0.75rem',
+                        borderRadius: '6px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                      }}
+                    >
+                      <Plus size={13} /> {cartItem ? `(${cartItem.quantity})` : 'Add'}
+                    </button>
+                  </div>
                 </div>
               </div>
             );
@@ -278,31 +357,41 @@ export const PosSalesPage: React.FC<PosSalesPageProps> = ({
       </div>
 
       {/* Right: Cart & Checkout Ledger */}
-      <div className="glass-card" style={{ padding: '24px', position: 'sticky', top: '90px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: '16px', borderBottom: '1px solid #e5e7eb' }}>
+      <div className="glass-card" style={{ padding: '22px', position: 'sticky', top: '90px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: '14px', borderBottom: '1px solid #e5e7eb' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <ShoppingCart size={18} color="#0891b2" />
+            <ShoppingCart size={19} color="#4f46e5" />
             <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#111827', margin: 0 }}>
-              Current Basket
+              Current Bill ({totalItems})
             </h3>
           </div>
           {cart.length > 0 && (
             <button
-              onClick={clearCart}
-              style={{ background: 'none', border: 'none', color: '#e02424', fontSize: '0.75rem', cursor: 'pointer', fontWeight: 600 }}
+              onClick={() => setIsClearModalOpen(true)}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#dc2626',
+                fontSize: '0.75rem',
+                cursor: 'pointer',
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+              }}
             >
-              Clear All
+              <RotateCcw size={12} /> Clear Bill
             </button>
           )}
         </div>
 
         {/* Cart Item List */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', margin: '16px 0', maxHeight: '340px', overflowY: 'auto' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', margin: '16px 0', maxHeight: '380px', overflowY: 'auto' }}>
           {cart.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '36px 16px', color: '#9ca3af' }}>
               <ShoppingCart size={36} style={{ margin: '0 auto 10px auto', opacity: 0.3 }} />
-              <p style={{ fontSize: '0.85rem' }}>Basket is empty</p>
-              <p style={{ fontSize: '0.75rem' }}>Click products on the left to add items</p>
+              <p style={{ fontSize: '0.85rem', fontWeight: 600, color: '#64748b' }}>Bill is empty</p>
+              <p style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Click products on the left or use Voice Assistant to add items</p>
             </div>
           ) : (
             cart.map((item) => {
@@ -311,58 +400,90 @@ export const PosSalesPage: React.FC<PosSalesPageProps> = ({
                 <div
                   key={item.product.id}
                   style={{
-                    padding: '12px',
+                    padding: '10px 12px',
                     borderRadius: '8px',
-                    background: pricing.hasDiscount ? '#fffbeb' : '#f9fafb',
-                    border: pricing.hasDiscount ? '1px solid #fde68a' : '1px solid #e5e7eb',
+                    background: pricing.hasDiscount ? '#fffbeb' : '#f8fafc',
+                    border: pricing.hasDiscount ? '1px solid #fde68a' : '1px solid #e2e8f0',
                     display: 'flex',
-                    justifyContent: 'space-between',
                     alignItems: 'center',
+                    gap: '10px',
                   }}
                 >
-                  <div style={{ flex: 1, marginRight: '10px' }}>
-                    <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#111827', lineHeight: 1.2 }}>
+                  {/* Cart Item Thumbnail */}
+                  <img
+                    src={getProductImageUrl(item.product.image_url)}
+                    alt={item.product.name}
+                    onError={onProductImageError}
+                    style={{
+                      width: '42px',
+                      height: '42px',
+                      borderRadius: '6px',
+                      objectFit: 'cover',
+                      border: '1px solid #e2e8f0',
+                      backgroundColor: '#ffffff',
+                      flexShrink: 0,
+                    }}
+                  />
+
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {item.product.name}
                     </div>
-                    <div style={{ fontSize: '0.72rem', color: '#0e9f6e', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '3px' }}>
-                      <Sparkles size={11} /> FEFO batch auto-selected
+                    <div style={{ fontSize: '0.7rem', color: '#059669', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                      <Sparkles size={10} /> FEFO batch auto-selected
                     </div>
-                    {pricing.hasDiscount && (
-                      <div style={{ fontSize: '0.7rem', color: '#92400e', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px', fontWeight: 600 }}>
-                        <Tag size={10} /> {pricing.discountPct}% Clearance Promo Applied
-                      </div>
-                    )}
-                    <div style={{ fontSize: '0.85rem', color: pricing.hasDiscount ? '#0e9f6e' : '#111827', fontWeight: 700, marginTop: '4px' }}>
+                    <div style={{ fontSize: '0.85rem', color: pricing.hasDiscount ? '#059669' : '#111827', fontWeight: 800, marginTop: '2px' }}>
                       ₹{(item.quantity * pricing.unitPrice).toFixed(2)}
-                      {pricing.hasDiscount && (
-                        <span style={{ fontSize: '0.7rem', color: '#9ca3af', textDecoration: 'line-through', marginLeft: '6px' }}>
-                          ₹{(item.quantity * pricing.originalPrice).toFixed(2)}
-                        </span>
-                      )}
+                      <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 500, marginLeft: '4px' }}>
+                        (₹{pricing.unitPrice.toFixed(2)} / {item.product.unit})
+                      </span>
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <button
                       onClick={() => updateQuantity(item.product.id, -1)}
-                      style={{ width: '26px', height: '26px', borderRadius: '4px', background: '#ffffff', border: '1px solid #d1d5db', color: '#374151', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                      style={{
+                        width: '26px',
+                        height: '26px',
+                        borderRadius: '4px',
+                        background: '#ffffff',
+                        border: '1px solid #cbd5e1',
+                        color: '#334155',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
                     >
-                      <Minus size={13} />
+                      <Minus size={12} />
                     </button>
-                    <span style={{ fontSize: '0.9rem', fontWeight: 700, minWidth: '20px', textAlign: 'center', color: '#111827' }}>
+                    <span style={{ fontSize: '0.88rem', fontWeight: 700, minWidth: '18px', textAlign: 'center', color: '#111827' }}>
                       {item.quantity}
                     </span>
                     <button
                       onClick={() => updateQuantity(item.product.id, 1)}
-                      style={{ width: '26px', height: '26px', borderRadius: '4px', background: '#ffffff', border: '1px solid #d1d5db', color: '#374151', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                      style={{
+                        width: '26px',
+                        height: '26px',
+                        borderRadius: '4px',
+                        background: '#ffffff',
+                        border: '1px solid #cbd5e1',
+                        color: '#334155',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
                     >
-                      <Plus size={13} />
+                      <Plus size={12} />
                     </button>
                     <button
                       onClick={() => removeFromCart(item.product.id)}
-                      style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', marginLeft: '4px' }}
+                      style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '2px' }}
+                      title="Remove item"
                     >
-                      <Trash2 size={15} />
+                      <Trash2 size={14} />
                     </button>
                   </div>
                 </div>
@@ -373,25 +494,58 @@ export const PosSalesPage: React.FC<PosSalesPageProps> = ({
 
         {/* Bill Summary */}
         <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '16px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: '#6b7280', marginBottom: '6px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', color: '#64748b', marginBottom: '6px' }}>
             <span>Total Items:</span>
             <span style={{ fontWeight: 600, color: '#111827' }}>{totalItems}</span>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.25rem', fontWeight: 800, color: '#111827', margin: '12px 0 16px 0' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.25rem', fontWeight: 800, color: '#111827', margin: '10px 0 16px 0' }}>
             <span>Grand Total:</span>
-            <span style={{ color: '#0891b2' }}>₹{subtotal.toFixed(2)}</span>
+            <span style={{ color: '#4f46e5' }}>₹{subtotal.toFixed(2)}</span>
           </div>
 
           <button
             className="btn btn-emerald"
             disabled={cart.length === 0 || isSubmitting}
             onClick={handleCheckout}
-            style={{ width: '100%', padding: '12px', fontSize: '0.95rem', fontWeight: 600 }}
+            style={{ width: '100%', padding: '12px', fontSize: '0.95rem', fontWeight: 700 }}
           >
             {isSubmitting ? 'Recording Sale...' : `Charge ₹${subtotal.toFixed(2)} & Print Bill`}
           </button>
         </div>
       </div>
+
+      {/* Clear Bill Confirmation Modal */}
+      {isClearModalOpen && (
+        <div className="modal-overlay" onClick={() => setIsClearModalOpen(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '380px', textAlign: 'center' }}>
+            <AlertTriangle size={36} color="#dc2626" style={{ margin: '0 auto 12px auto' }} />
+            <h3 style={{ fontSize: '1.15rem', fontWeight: 800, color: '#111827', marginBottom: '8px' }}>
+              Clear Entire Bill?
+            </h3>
+            <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '20px' }}>
+              Are you sure you want to remove all {totalItems} items (₹{subtotal.toFixed(2)}) from the current basket?
+            </p>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setIsClearModalOpen(false)}
+                style={{ flex: 1 }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={handleConfirmClear}
+                style={{ flex: 1, background: '#dc2626', color: '#ffffff' }}
+              >
+                Yes, Clear All
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Sale Success Invoice Modal */}
       {completedSale && (

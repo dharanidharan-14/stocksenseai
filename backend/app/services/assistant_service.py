@@ -161,6 +161,7 @@ class AssistantService:
         confirmed: bool = False,
         action_payload: Optional[Dict[str, Any]] = None,
         session_id: Optional[str] = None,
+        language_preference: Optional[str] = "tanglish",
     ) -> AssistantResponse:
         """
         Main entrypoint:
@@ -197,6 +198,9 @@ class AssistantService:
                 intent="CANCELLATION",
                 speech_text=speech,
                 display_text=display,
+                spoken_reply_tamil="Transaction cancel aaidichu.",
+                spoken_reply_english="Transaction cancelled.",
+                spoken_reply_tanglish="Transaction cancel aaidichu.",
                 suggestions=["How much rice stock is left?", "What should I reorder today?"]
             )
             SessionStore.append_turn(session_id, "assistant", resp.speech_text)
@@ -215,6 +219,9 @@ class AssistantService:
                     intent="CONFIRMATION",
                     speech_text="There is no pending transaction to confirm. What would you like to do?",
                     display_text="No pending proposal found. You can ask to record a sale or receive new stock.",
+                    spoken_reply_tamil="Confirm panna endha transaction-um illai. Enna seiya vendum?",
+                    spoken_reply_english="There is no pending transaction to confirm. What would you like to do?",
+                    spoken_reply_tanglish="Confirm panna pending transaction edhuvum illa.",
                     suggestions=["How much rice stock is left?", "Record a sale of 2 milk packets"]
                 )
                 SessionStore.append_turn(session_id, "assistant", resp.speech_text)
@@ -260,6 +267,9 @@ class AssistantService:
                     requires_confirmation=True,
                     action_payload=pending,
                     data=pending,
+                    spoken_reply_tamil=f"{pending['quantity']} {pending['unit']} {pending['product_name']}-a maathittaen. Confirm pannunga.",
+                    spoken_reply_english=speech,
+                    spoken_reply_tanglish=f"{pending['quantity']} {pending['unit']} {pending['product_name']}-a update pannittaen. Confirm pannalaamaa?",
                     suggestions=["Aama, confirm pannu", "Cancel pannidu"]
                 )
                 SessionStore.append_turn(session_id, "assistant", resp.speech_text)
@@ -281,6 +291,9 @@ class AssistantService:
                 speech_text=parsed.clarification_question or parsed.spoken_reply_english or "Could you please clarify that command?",
                 display_text=parsed.clarification_question or "Please provide additional details to complete this request.",
                 raw_transcript=text,
+                spoken_reply_tamil="Dhayavuseidhu vilakkamaaga kooravum.",
+                spoken_reply_english=parsed.clarification_question or "Could you please clarify that command?",
+                spoken_reply_tanglish="Konjam clarify pannunga bro.",
                 suggestions=["How much rice stock is left?", "Record a sale of 2 milk packets"],
             )
         elif intent == "CHECK_STOCK":
@@ -299,6 +312,14 @@ class AssistantService:
             resp = await cls._handle_record_sale(db, text, parsed, session_id)
         elif intent == "RECEIVE_STOCK":
             resp = await cls._handle_receive_stock(db, text, parsed, session_id)
+        elif intent == "ADD_TO_CART":
+            resp = await cls._handle_add_to_cart(db, text, parsed)
+        elif intent == "REMOVE_FROM_CART":
+            resp = await cls._handle_remove_from_cart(db, text, parsed)
+        elif intent == "CHECK_BILL_TOTAL":
+            resp = await cls._handle_check_bill_total(db, text, parsed)
+        elif intent == "CLEAR_BILL":
+            resp = await cls._handle_clear_bill(db, text, parsed)
         else:
             # Explicitly reject unknown commands without falling back to a stock check
             resp = AssistantResponse(
@@ -310,6 +331,9 @@ class AssistantService:
                     "StockSense AI supports stock lookups, sales, receipts, expiry alerts, and purchase recommendations."
                 ),
                 raw_transcript=text,
+                spoken_reply_tamil="Enakku puriyavillai. Stock, sales, alladhu transactions patri ketkalaam.",
+                spoken_reply_english="I did not understand that command. You can ask about stock, sales, or record transactions.",
+                spoken_reply_tanglish="Puriyala bro. Stock, sales, alladhu cart billing patri kekkalaam.",
                 suggestions=[
                     "Tomato stock la evlo irukku?",
                     "Innaiku sales evlo?",
@@ -320,6 +344,16 @@ class AssistantService:
             )
 
         resp.raw_transcript = text
+
+        # Select speech text based on user language preference
+        lang_pref = (language_preference or "tanglish").lower()
+        if lang_pref == "tamil" and getattr(resp, "spoken_reply_tamil", None):
+            resp.speech_text = resp.spoken_reply_tamil
+        elif lang_pref == "english" and getattr(resp, "spoken_reply_english", None):
+            resp.speech_text = resp.spoken_reply_english
+        elif lang_pref in ["tanglish", "thanglish"] and getattr(resp, "spoken_reply_tanglish", None):
+            resp.speech_text = resp.spoken_reply_tanglish
+
         SessionStore.append_turn(session_id, "assistant", resp.speech_text)
         return resp
 
@@ -1144,7 +1178,213 @@ class AssistantService:
         )
 
     # ──────────────────────────────────────────────────────────────────────────
-    # D. CONFIRMED ACTIONS EXECUTOR (STRICT TRANSACTIONAL BOUNDARY)
+    # D. BILLING & POS CART ACTIONS (VOICE-CONTROLLED BASKET MANIPULATION)
+    # ──────────────────────────────────────────────────────────────────────────
+
+    @classmethod
+    async def _handle_add_to_cart(
+        cls, db: AsyncSession, text: str, parsed: GeminiParsedIntent
+    ) -> AssistantResponse:
+        candidates = [t for t in [parsed.product_normalized, parsed.product_raw] if t]
+        matched = await cls.match_products(db, candidates if candidates else [text])
+
+        if not matched:
+            return AssistantResponse(
+                intent="CLARIFICATION",
+                confidence_status="NEEDS_CLARIFICATION",
+                speech_text="I couldn't identify which product you want to add to the bill. Please specify the product name.",
+                display_text="Product not recognized in catalog. Please specify the product name (e.g., 'Add 2 Nandini milk to cart').",
+                raw_transcript=text,
+                spoken_reply_tamil="Endha product bill la add pannanum? Product peyar sollunga.",
+                spoken_reply_english="Which product would you like to add to the bill? Please state the name.",
+                spoken_reply_tanglish="Endha product bill-la add pannanum? Product name sollunga.",
+                suggestions=["Add 2 Nandini milk to cart", "Add 1 kg sugar to bill"],
+            )
+
+        if len(matched) > 1:
+            user_kw = (parsed.product_raw or parsed.product_normalized or "").lower().strip()
+            if not any(user_kw == p.name.lower() or user_kw == p.sku.lower() for p in matched[:3]):
+                top_items = matched[:3]
+                speech = f"Multiple products match: {top_items[0].name} or {top_items[1].name}. Which one would you like to add to the bill?"
+                display = (
+                    f"**Multiple Product Candidates Found:**\n"
+                    + "\n".join([f"- **{p.name}** (SKU: `{p.sku}`, Price: ₹{p.selling_price})" for p in top_items])
+                    + "\n\nPlease clarify which exact product you would like to add."
+                )
+                return AssistantResponse(
+                    intent="CLARIFICATION",
+                    confidence_status="AMBIGUOUS",
+                    speech_text=speech,
+                    display_text=display,
+                    raw_transcript=text,
+                    spoken_reply_tamil=f"{top_items[0].name} alladhu {top_items[1].name} - endha product bill la add pannanum?",
+                    spoken_reply_english=speech,
+                    spoken_reply_tanglish=f"{top_items[0].name} or {top_items[1].name} - edha cart la add pannanum?",
+                    suggestions=[f"Add {p.name.split()[0]} to bill" for p in top_items],
+                )
+
+        product = matched[0]
+        usable_stock = await InventoryService.get_usable_stock(db, product.id)
+        if usable_stock <= 0:
+            speech = f"{product.name} is currently out of stock. Cannot add to bill."
+            return AssistantResponse(
+                intent="ADD_TO_CART",
+                confidence_status="CONFIRMED",
+                speech_text=speech,
+                display_text=f"⚠️ **Out of Stock:** **{product.name}** has 0 units in stock. Cannot add to bill.",
+                raw_transcript=text,
+                spoken_reply_tamil=f"{product.name} tharpodhu stock la illai. Bill la add panna mudiyaadhu.",
+                spoken_reply_english=speech,
+                spoken_reply_tanglish=f"{product.name} out of stock. Bill la podamudiyadhu.",
+            )
+
+        qty_num = parsed.quantity if parsed.quantity is not None else parse_number_from_text(text)
+        if qty_num is None:
+            qty_num = Decimal("1")
+        else:
+            qty_num = Decimal(str(qty_num))
+
+        if qty_num > usable_stock:
+            speech = f"Only {usable_stock} {product.unit}s of {product.name} available in stock. Cannot add {qty_num}."
+            return AssistantResponse(
+                intent="ADD_TO_CART",
+                confidence_status="CONFIRMED",
+                speech_text=speech,
+                display_text=f"⚠️ **Insufficient Stock:** Available: {usable_stock} {product.unit}s. Requested: {qty_num}.",
+                raw_transcript=text,
+                spoken_reply_tamil=f"{product.name} stock la {usable_stock} {product.unit} dhaan irukku. {qty_num} add panna mudiyaadhu.",
+                spoken_reply_english=speech,
+                spoken_reply_tanglish=f"{product.name} stock-la {usable_stock} {product.unit} mattum dhaan irukku.",
+            )
+
+        line_total = float(qty_num * product.selling_price)
+        speech_en = f"Added {qty_num} {product.unit} of {product.name} to the bill at ₹{product.selling_price:.2f} each. Line total is ₹{line_total:.2f}."
+        speech_ta = f"{qty_num} {product.unit} {product.name} bill-la sethutaen. Vilai ₹{line_total:.2f}."
+        speech_tgl = f"{qty_num} {product.unit} {product.name} bill-la add pannittaen. Line total ₹{line_total:.2f}."
+
+        display = (
+            f"🛒 **Added to Bill (POS Basket):**\n"
+            f"- **Product:** {product.name}\n"
+            f"- **Quantity:** {qty_num} {product.unit}\n"
+            f"- **Unit Price:** ₹{product.selling_price:,.2f}\n"
+            f"- **Line Total:** ₹{line_total:,.2f}\n"
+            f"- **Batch Allocation:** FEFO auto-allocated on checkout"
+        )
+
+        return AssistantResponse(
+            intent="ADD_TO_CART",
+            confidence_status="CONFIRMED",
+            speech_text=speech_en,
+            display_text=display,
+            spoken_reply_english=speech_en,
+            spoken_reply_tamil=speech_ta,
+            spoken_reply_tanglish=speech_tgl,
+            raw_transcript=text,
+            action_payload={
+                "action": "ADD_TO_CART",
+                "product_id": product.id,
+                "product_name": product.name,
+                "quantity": float(qty_num),
+                "unit_price": float(product.selling_price),
+                "unit": product.unit,
+                "image_url": product.image_url,
+                "line_total": line_total,
+            },
+            data={
+                "product_id": product.id,
+                "product_name": product.name,
+                "quantity": float(qty_num),
+                "unit_price": float(product.selling_price),
+                "unit": product.unit,
+                "image_url": product.image_url,
+                "line_total": line_total,
+            },
+            suggestions=["What is the bill total?", "Add another item to bill", "Clear the bill"],
+        )
+
+    @classmethod
+    async def _handle_remove_from_cart(
+        cls, db: AsyncSession, text: str, parsed: GeminiParsedIntent
+    ) -> AssistantResponse:
+        candidates = [t for t in [parsed.product_normalized, parsed.product_raw] if t]
+        matched = await cls.match_products(db, candidates if candidates else [text])
+
+        if not matched:
+            return AssistantResponse(
+                intent="CLARIFICATION",
+                confidence_status="NEEDS_CLARIFICATION",
+                speech_text="Which product would you like to remove from the bill?",
+                display_text="Please specify which product to remove from the bill.",
+                raw_transcript=text,
+                spoken_reply_tamil="Endha product-a bill la irundhu remove pannanum?",
+                spoken_reply_english="Which product would you like to remove from the bill?",
+                spoken_reply_tanglish="Endha item-a cart la irundhu remove pannanum?",
+            )
+
+        product = matched[0]
+        speech_en = f"Removed {product.name} from the bill."
+        speech_ta = f"{product.name}-a bill-la irundhu neekkittaen."
+        speech_tgl = f"{product.name}-a bill-la irundhu remove pannittaen."
+
+        return AssistantResponse(
+            intent="REMOVE_FROM_CART",
+            confidence_status="CONFIRMED",
+            speech_text=speech_en,
+            display_text=f"🗑️ **Removed from Bill:** **{product.name}** was removed from the active basket.",
+            spoken_reply_english=speech_en,
+            spoken_reply_tamil=speech_ta,
+            spoken_reply_tanglish=speech_tgl,
+            raw_transcript=text,
+            action_payload={"action": "REMOVE_FROM_CART", "product_id": product.id, "product_name": product.name},
+            data={"product_id": product.id, "product_name": product.name},
+            suggestions=["What is the bill total?", "Clear the bill"],
+        )
+
+    @classmethod
+    async def _handle_check_bill_total(
+        cls, db: AsyncSession, text: str, parsed: GeminiParsedIntent
+    ) -> AssistantResponse:
+        speech_en = "You can view your current live bill in the POS Billing panel."
+        speech_ta = "Current bill summary POS screen-la theriyum."
+        speech_tgl = "Current bill details POS billing panel-la paakkalaam."
+
+        return AssistantResponse(
+            intent="CHECK_BILL_TOTAL",
+            confidence_status="CONFIRMED",
+            speech_text=speech_en,
+            display_text="🧾 **POS Bill Status:** View itemized totals and charges in the Visual POS tab.",
+            spoken_reply_english=speech_en,
+            spoken_reply_tamil=speech_ta,
+            spoken_reply_tanglish=speech_tgl,
+            raw_transcript=text,
+            action_payload={"action": "CHECK_BILL_TOTAL"},
+            suggestions=["Add 2 Nandini milk to cart", "Clear the bill"],
+        )
+
+    @classmethod
+    async def _handle_clear_bill(
+        cls, db: AsyncSession, text: str, parsed: GeminiParsedIntent
+    ) -> AssistantResponse:
+        speech_en = "Are you sure you want to clear the entire bill? Please confirm to proceed or cancel."
+        speech_ta = "Bill mothama clear panna porom. Confirm pannunga."
+        speech_tgl = "Bill-a mothama clear panna porom. Sari-na confirm pannunga."
+
+        return AssistantResponse(
+            intent="CLEAR_BILL",
+            confidence_status="CONFIRMED",
+            requires_confirmation=True,
+            speech_text=speech_en,
+            display_text="⚠️ **Clear Bill Confirmation:** Are you sure you want to remove all items from the current counter bill?",
+            spoken_reply_english=speech_en,
+            spoken_reply_tamil=speech_ta,
+            spoken_reply_tanglish=speech_tgl,
+            raw_transcript=text,
+            action_payload={"action": "CLEAR_BILL"},
+            suggestions=["Aama, confirm pannu", "Cancel pannidu"],
+        )
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # E. CONFIRMED ACTIONS EXECUTOR (STRICT TRANSACTIONAL BOUNDARY)
     # ──────────────────────────────────────────────────────────────────────────
 
     @classmethod
@@ -1152,6 +1392,17 @@ class AssistantService:
         cls, db: AsyncSession, payload: Dict[str, Any]
     ) -> AssistantResponse:
         action = payload.get("action")
+
+        if action == "CLEAR_BILL":
+            return AssistantResponse(
+                intent="CLEAR_BILL",
+                speech_text="Current bill has been cleared.",
+                display_text="🗑️ **Bill Cleared:** All items have been removed from the current basket.",
+                spoken_reply_tamil="Bill mothama clear aaidichu.",
+                spoken_reply_english="Current bill has been cleared.",
+                spoken_reply_tanglish="Bill-a clear pannittaen.",
+                action_payload={"action": "CLEAR_BILL_EXECUTED"},
+            )
 
         if action == "RECORD_SALE":
             product_id = payload["product_id"]

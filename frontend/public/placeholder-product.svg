@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f8fafc"/>
+      <stop offset="100%" stop-color="#e2e8f0"/>
+    </linearGradient>
+    <linearGradient id="box" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#cbd5e1"/>
+      <stop offset="100%" stop-color="#94a3b8"/>
+    </linearGradient>
+  </defs>
+  <rect width="200" height="200" rx="16" fill="url(#bg)"/>
+  <rect x="1" y="1" width="198" height="198" rx="15" fill="none" stroke="#cbd5e1" stroke-width="2"/>
+  <g transform="translate(50, 48)">
+    <!-- Package box outline -->
+    <path d="M50 8 L88 28 L50 48 L12 28 Z" fill="#e2e8f0" stroke="#64748b" stroke-width="3" stroke-linejoin="round"/>
+    <path d="M12 28 L12 68 L50 88 L50 48 Z" fill="#cbd5e1" stroke="#64748b" stroke-width="3" stroke-linejoin="round"/>
+    <path d="M88 28 L88 68 L50 88 L50 48 Z" fill="#94a3b8" stroke="#64748b" stroke-width="3" stroke-linejoin="round"/>
+    <!-- Fold line -->
+    <line x1="50" y1="48" x2="50" y2="88" stroke="#475569" stroke-width="3"/>
+    <!-- Grocery leaf accent -->
+    <path d="M50 18 Q60 5 70 12 Q72 25 50 28" fill="#10b981" opacity="0.9"/>
+  </g>
+  <text x="100" y="162" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="600" fill="#64748b" letter-spacing="0.5">StockSense AI</text>
+</svg>

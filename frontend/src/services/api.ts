@@ -775,6 +775,7 @@ export const api = {
         safety_stock: Number(prodData.safety_stock) || 10,
         reorder_threshold: Number(prodData.reorder_threshold) || 15,
         shelf_life_days: prodData.shelf_life_days ? Number(prodData.shelf_life_days) : undefined,
+        image_url: prodData.image_url,
         usable_stock: 0,
         total_stock: 0,
         is_active: true,
@@ -782,6 +783,27 @@ export const api = {
       mockProducts.unshift(newProd);
       return newProd;
     }
+  },
+
+  async updateProduct(productId: number, prodData: Partial<Product>): Promise<Product> {
+    const resp = await apiClient.put(`/products/${productId}`, prodData);
+    return resp.data;
+  },
+
+  async uploadProductImage(productId: number, file: File): Promise<Product> {
+    const formData = new FormData();
+    formData.append('file', file);
+    const resp = await apiClient.post(`/products/${productId}/image`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return resp.data;
+  },
+
+  async deleteProductImage(productId: number): Promise<Product> {
+    const resp = await apiClient.delete(`/products/${productId}/image`);
+    return resp.data;
   },
 
   async getCategories(): Promise<Category[]> {
@@ -1146,7 +1168,8 @@ export const api = {
     text: string,
     confirmed: boolean = false,
     action_payload?: any,
-    session_id?: string
+    session_id?: string,
+    language_preference: string = 'tanglish'
   ): Promise<AssistantResponse> {
     try {
       const resp = await apiClient.post('/assistant/command', {
@@ -1154,6 +1177,7 @@ export const api = {
         confirmed,
         action_payload,
         session_id,
+        language_preference,
       });
       return resp.data;
     } catch (err: any) {

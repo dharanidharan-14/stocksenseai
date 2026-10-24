@@ -1,8 +1,6 @@
-"""
-StockSense AI - Products Router
-"""
-
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+import os
+import uuid
+from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
@@ -19,6 +17,17 @@ from app.schemas.product import (
 )
 
 router = APIRouter(prefix="/api/products", tags=["Products"])
+
+ALLOWED_IMAGE_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
+MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5 MB
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+PRODUCT_UPLOAD_DIR = os.path.join(BASE_DIR, "uploads", "products")
+os.makedirs(PRODUCT_UPLOAD_DIR, exist_ok=True)
 
 
 @router.get("", response_model=ProductListResponse)
@@ -90,7 +99,9 @@ async def list_products(
             supplier_name=sup_name,
             supplier_lead_time_days=p.supplier_lead_time_days,
             safety_stock=p.safety_stock, reorder_threshold=p.reorder_threshold,
-            shelf_life_days=p.shelf_life_days, is_active=p.is_active,
+            shelf_life_days=p.shelf_life_days,
+            image_url=p.image_url,
+            is_active=p.is_active,
             current_stock=stock,
             usable_stock=stock,
             total_stock=stock,
@@ -135,7 +146,9 @@ async def create_product(
         preferred_supplier_id=product.preferred_supplier_id,
         supplier_lead_time_days=product.supplier_lead_time_days,
         safety_stock=product.safety_stock, reorder_threshold=product.reorder_threshold,
-        shelf_life_days=product.shelf_life_days, is_active=product.is_active,
+        shelf_life_days=product.shelf_life_days,
+        image_url=product.image_url,
+        is_active=product.is_active,
         current_stock=0,
         created_at=product.created_at, updated_at=product.updated_at,
     )
@@ -173,7 +186,9 @@ async def get_product(
         supplier_name=sup_name,
         supplier_lead_time_days=product.supplier_lead_time_days,
         safety_stock=product.safety_stock, reorder_threshold=product.reorder_threshold,
-        shelf_life_days=product.shelf_life_days, is_active=product.is_active,
+        shelf_life_days=product.shelf_life_days,
+        image_url=product.image_url,
+        is_active=product.is_active,
         current_stock=stock,
         usable_stock=stock,
         total_stock=stock,
@@ -208,14 +223,169 @@ async def update_product(
 
     stock = await InventoryService.get_usable_stock(db, product.id)
 
+    cat_name = None
+    if product.category_id:
+        cat = await db.get(Category, product.category_id)
+        cat_name = cat.name if cat else None
+
+    sup_name = None
+    if product.preferred_supplier_id:
+        sup = await db.get(Supplier, product.preferred_supplier_id)
+        sup_name = sup.name if sup else None
+
     return ProductResponse(
         id=product.id, name=product.name, sku=product.sku,
-        category_id=product.category_id, unit=product.unit,
+        category_id=product.category_id, category_name=cat_name,
+        unit=product.unit,
         purchase_cost=product.purchase_cost, selling_price=product.selling_price,
         preferred_supplier_id=product.preferred_supplier_id,
+        supplier_name=sup_name,
         supplier_lead_time_days=product.supplier_lead_time_days,
         safety_stock=product.safety_stock, reorder_threshold=product.reorder_threshold,
-        shelf_life_days=product.shelf_life_days, is_active=product.is_active,
+        shelf_life_days=product.shelf_life_days,
+        image_url=product.image_url,
+        is_active=product.is_active,
+        current_stock=stock,
+        usable_stock=stock,
+        total_stock=stock,
+        created_at=product.created_at, updated_at=product.updated_at,
+    )
+
+
+@router.post("/{product_id}/image", response_model=ProductResponse)
+async def upload_product_image(
+    product_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Safely upload and associate an image with a product.
+    Validates MIME type, caps file size, prevents path traversal, and returns persistent URL.
+    """
+    product = await db.get(Product, product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    content_type = (file.content_type or "").lower()
+    if content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid image type '{content_type}'. Supported formats: JPEG, PNG, WEBP.",
+        )
+
+    # Read content and enforce size limits (max 5MB)
+    contents = await file.read()
+    if len(contents) > MAX_IMAGE_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail="File size exceeds maximum allowed limit of 5MB.",
+        )
+    if len(contents) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    # Safe collision-free filename
+    ext = ALLOWED_IMAGE_TYPES[content_type]
+    safe_filename = f"prod_{product_id}_{uuid.uuid4().hex[:12]}{ext}"
+    target_path = os.path.join(PRODUCT_UPLOAD_DIR, safe_filename)
+
+    # Ensure path traversal cannot escape PRODUCT_UPLOAD_DIR
+    target_abs = os.path.abspath(target_path)
+    allowed_abs = os.path.abspath(PRODUCT_UPLOAD_DIR)
+    if not target_abs.startswith(allowed_abs):
+        raise HTTPException(status_code=400, detail="Invalid file destination path.")
+
+    with open(target_abs, "wb") as f:
+        f.write(contents)
+
+    # If previous image existed and was in uploads, remove old file
+    if product.image_url and product.image_url.startswith("/uploads/products/"):
+        old_filename = os.path.basename(product.image_url)
+        old_file_path = os.path.join(PRODUCT_UPLOAD_DIR, old_filename)
+        if os.path.exists(old_file_path) and os.path.abspath(old_file_path).startswith(allowed_abs):
+            try:
+                os.remove(old_file_path)
+            except Exception:
+                pass
+
+    product.image_url = f"/uploads/products/{safe_filename}"
+    await db.flush()
+
+    stock = await InventoryService.get_usable_stock(db, product.id)
+    cat_name = None
+    if product.category_id:
+        cat = await db.get(Category, product.category_id)
+        cat_name = cat.name if cat else None
+    sup_name = None
+    if product.preferred_supplier_id:
+        sup = await db.get(Supplier, product.preferred_supplier_id)
+        sup_name = sup.name if sup else None
+
+    return ProductResponse(
+        id=product.id, name=product.name, sku=product.sku,
+        category_id=product.category_id, category_name=cat_name,
+        unit=product.unit, purchase_cost=product.purchase_cost,
+        selling_price=product.selling_price,
+        preferred_supplier_id=product.preferred_supplier_id,
+        supplier_name=sup_name,
+        supplier_lead_time_days=product.supplier_lead_time_days,
+        safety_stock=product.safety_stock, reorder_threshold=product.reorder_threshold,
+        shelf_life_days=product.shelf_life_days,
+        image_url=product.image_url,
+        is_active=product.is_active,
+        current_stock=stock,
+        usable_stock=stock,
+        total_stock=stock,
+        created_at=product.created_at, updated_at=product.updated_at,
+    )
+
+
+@router.delete("/{product_id}/image", response_model=ProductResponse)
+async def delete_product_image(
+    product_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Remove product image reference and delete storage file."""
+    product = await db.get(Product, product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    if product.image_url and product.image_url.startswith("/uploads/products/"):
+        old_filename = os.path.basename(product.image_url)
+        old_file_path = os.path.join(PRODUCT_UPLOAD_DIR, old_filename)
+        allowed_abs = os.path.abspath(PRODUCT_UPLOAD_DIR)
+        if os.path.exists(old_file_path) and os.path.abspath(old_file_path).startswith(allowed_abs):
+            try:
+                os.remove(old_file_path)
+            except Exception:
+                pass
+
+    product.image_url = None
+    await db.flush()
+
+    stock = await InventoryService.get_usable_stock(db, product.id)
+    cat_name = None
+    if product.category_id:
+        cat = await db.get(Category, product.category_id)
+        cat_name = cat.name if cat else None
+    sup_name = None
+    if product.preferred_supplier_id:
+        sup = await db.get(Supplier, product.preferred_supplier_id)
+        sup_name = sup.name if sup else None
+
+    return ProductResponse(
+        id=product.id, name=product.name, sku=product.sku,
+        category_id=product.category_id, category_name=cat_name,
+        unit=product.unit, purchase_cost=product.purchase_cost,
+        selling_price=product.selling_price,
+        preferred_supplier_id=product.preferred_supplier_id,
+        supplier_name=sup_name,
+        supplier_lead_time_days=product.supplier_lead_time_days,
+        safety_stock=product.safety_stock, reorder_threshold=product.reorder_threshold,
+        shelf_life_days=product.shelf_life_days,
+        image_url=product.image_url,
+        is_active=product.is_active,
         current_stock=stock,
         usable_stock=stock,
         total_stock=stock,

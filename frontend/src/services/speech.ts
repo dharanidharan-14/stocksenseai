@@ -148,11 +148,21 @@ class SpeechService {
     return this.isListeningActive;
   }
 
+  private currentLang: string = 'en-IN';
+
+  public setRecognitionLang(lang: string) {
+    this.currentLang = lang;
+    if (this.recognition) {
+      this.recognition.lang = lang;
+    }
+  }
+
   public speak(
     text: string,
     onStart?: () => void,
     onEnd?: () => void,
-    onError?: (err: any) => void
+    onError?: (err: any) => void,
+    languagePreference: string = 'tanglish'
   ) {
     if (!this.isSynthesisSupported()) return;
 
@@ -168,15 +178,16 @@ class SpeechService {
     if (!cleanSpeech) return;
 
     try {
-      const isTamil = /[\u0B80-\u0BFF]/.test(cleanSpeech);
+      const isTamilScript = /[\u0B80-\u0BFF]/.test(cleanSpeech);
+      const isTamilPref = languagePreference === 'tamil' || isTamilScript;
       const utterance = new SpeechSynthesisUtterance(cleanSpeech);
-      utterance.lang = isTamil ? 'ta-IN' : 'en-IN';
+      utterance.lang = isTamilPref ? 'ta-IN' : 'en-IN';
       utterance.rate = 1.0;
       utterance.pitch = 1.0;
 
       // Select an Indian, Tamil, or clear English voice if available
       const voices = window.speechSynthesis.getVoices();
-      if (isTamil) {
+      if (isTamilPref) {
         const taVoice = voices.find((v) => v.lang.includes('ta') || v.name.toLowerCase().includes('tamil'));
         if (taVoice) utterance.voice = taVoice;
       } else {

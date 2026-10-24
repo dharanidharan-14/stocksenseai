@@ -32,6 +32,7 @@ import {
 import { AssistantChatMessage, AssistantResponse, Product } from '../types';
 import { api } from '../services/api';
 import { speechService } from '../services/speech';
+import { getProductImageUrl, onProductImageError } from '../utils/imageHelper';
 
 interface VoiceAssistantPageProps {
   products: Product[];
@@ -45,20 +46,23 @@ export const VoiceAssistantPage: React.FC<VoiceAssistantPageProps> = ({
   onDataChanged,
 }) => {
   const [sessionId] = useState(() => 'stocksense_session_' + Math.random().toString(36).substring(2, 10));
+  const [languagePref, setLanguagePref] = useState<'tanglish' | 'tamil' | 'english'>('tanglish');
   const [messages, setMessages] = useState<AssistantChatMessage[]>(() => {
     return [
       {
         id: 'welcome-1',
         sender: 'assistant',
-        text: 'வணக்கம்! நான் உங்கள் StockSense AI Inventory Assistant. Ask me in English, தமிழ், or Tanglish about your stock, expiring batches, sales performance, or tell me to record sales and stock receipts.',
+        text: 'வணக்கம்! நான் உங்கள் StockSense AI Inventory Assistant. Ask me in English, தமிழ், or Tanglish about your stock, expiring batches, sales performance, or tell me to add items to your POS bill.',
         speechText:
-          'Hello! I am your StockSense AI Assistant. How can I help with your inventory today? Neengal Tamil alladhu Englishil kekkalaam.',
+          'Hello! I am your StockSense AI Assistant. How can I help with your inventory and billing today? Neengal Tamil alladhu Englishil kekkalaam.',
         timestamp: new Date(),
         suggestions: [
+          '2 packet milk cart la podu',
           'Tomato stock la evlo irukku?',
           'How much rice stock is left?',
           'Innaiku sales evlo?',
           'Which products expire tomorrow?',
+          'What is the bill total?',
           'Record a sale of 2 milk packets',
           '2000 rooba budget la enna vaanganum?',
         ],
@@ -146,7 +150,8 @@ export const VoiceAssistantPage: React.FC<VoiceAssistantPageProps> = ({
       text,
       () => setIsSpeaking(true),
       () => setIsSpeaking(false),
-      () => setIsSpeaking(false)
+      () => setIsSpeaking(false),
+      languagePref
     );
   };
 
@@ -175,7 +180,8 @@ export const VoiceAssistantPage: React.FC<VoiceAssistantPageProps> = ({
         trimmed,
         false,
         undefined,
-        sessionId
+        sessionId,
+        languagePref
       );
 
       const assistantMsgId = 'asst-' + Date.now();
@@ -240,7 +246,7 @@ export const VoiceAssistantPage: React.FC<VoiceAssistantPageProps> = ({
       // User cancelled via UI button
       setPendingConfirmation(null);
       try {
-        await api.sendAssistantCommand('cancel', false, undefined, sessionId);
+        await api.sendAssistantCommand('cancel', false, undefined, sessionId, languagePref);
       } catch (e) {
         // ignore
       }
@@ -264,7 +270,8 @@ export const VoiceAssistantPage: React.FC<VoiceAssistantPageProps> = ({
         'confirm',
         true,
         pendingConfirmation.payload,
-        sessionId
+        sessionId,
+        languagePref
       );
 
       const confirmedMsg: AssistantChatMessage = {
@@ -344,8 +351,75 @@ export const VoiceAssistantPage: React.FC<VoiceAssistantPageProps> = ({
           </div>
         </div>
 
-        {/* Controls: Auto-speech toggle & Stop speaking button */}
+        {/* Controls: Language Selector, Auto-speech toggle & Stop speaking button */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          {/* Language Selector */}
+          <div style={{ display: 'flex', alignItems: 'center', background: '#f1f5f9', borderRadius: '8px', padding: '2px', border: '1px solid #e2e8f0' }}>
+            <button
+              type="button"
+              onClick={() => {
+                setLanguagePref('tanglish');
+                speechService.setRecognitionLang('en-IN');
+              }}
+              style={{
+                padding: '4px 10px',
+                borderRadius: '6px',
+                border: 'none',
+                background: languagePref === 'tanglish' ? '#ffffff' : 'transparent',
+                color: languagePref === 'tanglish' ? '#4f46e5' : '#64748b',
+                fontWeight: languagePref === 'tanglish' ? 700 : 500,
+                fontSize: '0.78rem',
+                cursor: 'pointer',
+                boxShadow: languagePref === 'tanglish' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+              }}
+              title="Speak in Tanglish"
+            >
+              Tanglish
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setLanguagePref('tamil');
+                speechService.setRecognitionLang('ta-IN');
+              }}
+              style={{
+                padding: '4px 10px',
+                borderRadius: '6px',
+                border: 'none',
+                background: languagePref === 'tamil' ? '#ffffff' : 'transparent',
+                color: languagePref === 'tamil' ? '#4f46e5' : '#64748b',
+                fontWeight: languagePref === 'tamil' ? 700 : 500,
+                fontSize: '0.78rem',
+                cursor: 'pointer',
+                boxShadow: languagePref === 'tamil' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+              }}
+              title="Speak in Tamil script"
+            >
+              தமிழ்
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setLanguagePref('english');
+                speechService.setRecognitionLang('en-IN');
+              }}
+              style={{
+                padding: '4px 10px',
+                borderRadius: '6px',
+                border: 'none',
+                background: languagePref === 'english' ? '#ffffff' : 'transparent',
+                color: languagePref === 'english' ? '#4f46e5' : '#64748b',
+                fontWeight: languagePref === 'english' ? 700 : 500,
+                fontSize: '0.78rem',
+                cursor: 'pointer',
+                boxShadow: languagePref === 'english' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+              }}
+              title="Speak in English"
+            >
+              English
+            </button>
+          </div>
+
           {isSpeaking && (
             <button
               onClick={handleStopSpeaking}
@@ -512,6 +586,55 @@ export const VoiceAssistantPage: React.FC<VoiceAssistantPageProps> = ({
               <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                 {msg.text}
               </div>
+
+              {/* Structured Card: Added to Bill POS Basket */}
+              {msg.actionPayload?.action === 'ADD_TO_CART' && (
+                <div
+                  style={{
+                    marginTop: '12px',
+                    padding: '12px 14px',
+                    background: '#f0fdf4',
+                    borderRadius: '8px',
+                    border: '1px solid #bbf7d0',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '12px',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <img
+                      src={getProductImageUrl(msg.actionPayload.image_url)}
+                      alt={msg.actionPayload.product_name}
+                      onError={onProductImageError}
+                      style={{
+                        width: '48px',
+                        height: '48px',
+                        borderRadius: '8px',
+                        objectFit: 'cover',
+                        border: '1px solid #86efac',
+                        backgroundColor: '#ffffff',
+                        flexShrink: 0,
+                      }}
+                    />
+                    <div>
+                      <div style={{ fontWeight: 700, color: '#166534', fontSize: '0.88rem' }}>
+                        {msg.actionPayload.quantity}x {msg.actionPayload.product_name}
+                      </div>
+                      <div style={{ fontSize: '0.78rem', color: '#15803d', marginTop: '2px' }}>
+                        Line Total: ₹{Number(msg.actionPayload.line_total).toFixed(2)} (₹{Number(msg.actionPayload.unit_price).toFixed(2)} / {msg.actionPayload.unit})
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => onNavigateTab('sales')}
+                    className="btn btn-primary"
+                    style={{ padding: '6px 12px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap' }}
+                  >
+                    Open POS Bill <ArrowRight size={13} />
+                  </button>
+                </div>
+              )}
 
               {/* Structured Card: Single Product Stock Info */}
               {msg.data && msg.data.product_name && msg.data.usable_stock !== undefined && (

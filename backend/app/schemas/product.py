@@ -48,6 +48,7 @@ class ProductCreate(BaseModel):
     safety_stock: Decimal = Field(default=Decimal("0"), ge=0)
     reorder_threshold: Decimal = Field(default=Decimal("0"), ge=0)
     shelf_life_days: Optional[int] = Field(None, ge=1)
+    image_url: Optional[str] = None
     is_active: bool = True
 
     @field_validator("selling_price")
@@ -70,6 +71,7 @@ class ProductUpdate(BaseModel):
     safety_stock: Optional[Decimal] = Field(None, ge=0)
     reorder_threshold: Optional[Decimal] = Field(None, ge=0)
     shelf_life_days: Optional[int] = Field(None, ge=1)
+    image_url: Optional[str] = None
     is_active: Optional[bool] = None
 
 
@@ -88,6 +90,7 @@ class ProductResponse(BaseModel):
     safety_stock: Decimal
     reorder_threshold: Decimal
     shelf_life_days: Optional[int]
+    image_url: Optional[str] = None
     is_active: bool
     current_stock: Optional[Decimal] = None
     usable_stock: Optional[Decimal] = None

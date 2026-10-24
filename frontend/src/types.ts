@@ -46,6 +46,7 @@ export interface Product {
   safety_stock: number;
   reorder_threshold: number;
   shelf_life_days?: number;
+  image_url?: string;
   is_active: boolean;
   usable_stock?: number;
   total_stock?: number;

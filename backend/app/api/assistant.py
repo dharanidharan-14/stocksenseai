@@ -29,6 +29,7 @@ async def process_assistant_command(
             confirmed=request.confirmed,
             action_payload=request.action_payload,
             session_id=request.session_id,
+            language_preference=request.language_preference,
         )
         return response
     except Exception as e:

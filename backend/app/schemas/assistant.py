@@ -12,6 +12,7 @@ class AssistantCommandRequest(BaseModel):
     confirmed: bool = Field(False)
     session_id: Optional[str] = Field(None)
     action_payload: Optional[Dict[str, Any]] = Field(None)
+    language_preference: Optional[str] = Field("tanglish", description="Target spoken reply language: 'english', 'tamil', or 'tanglish'")
 
 
 class ProductMatch(BaseModel):
@@ -73,6 +74,9 @@ class AssistantResponse(BaseModel):
     suggestions: List[str] = []
     raw_transcript: Optional[str] = None
     confidence_status: str = "CONFIRMED"  # CONFIRMED, AMBIGUOUS, UNSUPPORTED, NEEDS_CLARIFICATION
+    spoken_reply_tamil: Optional[str] = None
+    spoken_reply_english: Optional[str] = None
+    spoken_reply_tanglish: Optional[str] = None
 
 
 class GeminiParsedIntent(BaseModel):
@@ -83,6 +87,7 @@ class GeminiParsedIntent(BaseModel):
             "Primary intent category. MUST be one of: "
             "CHECK_STOCK, CHECK_LOW_STOCK, CHECK_OUT_OF_STOCK, CHECK_EXPIRY, "
             "SALES_INFO, AI_RECOMMENDATION, RECEIVE_STOCK, RECORD_SALE, "
+            "ADD_TO_CART, REMOVE_FROM_CART, CHECK_BILL_TOTAL, CLEAR_BILL, "
             "CONFIRMATION, CANCELLATION, CORRECTION, CLARIFICATION, "
             "DISCOUNT_OR_OFFER, PRICE_MODIFICATION, UNSUPPORTED, UNKNOWN"
         )
